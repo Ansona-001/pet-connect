@@ -2,22 +2,21 @@ import 'package:flutter/material.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_radius.dart';
-import '../../../core/theme/app_shadows.dart';
 import '../../../core/theme/app_text_styles.dart';
 
-/// Primary application button.
+/// Secondary application button.
 ///
-/// Used for main CTA actions such as Continue, Get Started, Submit,
-/// and Save.
-class PrimaryButton extends StatefulWidget {
-  const PrimaryButton({
+/// Used for lower-priority actions such as Skip, Cancel, Back,
+/// and Sign In.
+class SecondaryButton extends StatefulWidget {
+  const SecondaryButton({
     super.key,
     required this.text,
     required this.onPressed,
     this.icon,
     this.isLoading = false,
     this.enabled = true,
-    this.height = 56,
+    this.height = 54,
     this.width = double.infinity,
   });
 
@@ -30,10 +29,10 @@ class PrimaryButton extends StatefulWidget {
   final double width;
 
   @override
-  State<PrimaryButton> createState() => _PrimaryButtonState();
+  State<SecondaryButton> createState() => _SecondaryButtonState();
 }
 
-class _PrimaryButtonState extends State<PrimaryButton> {
+class _SecondaryButtonState extends State<SecondaryButton> {
   bool _pressed = false;
 
   bool get _disabled =>
@@ -54,20 +53,15 @@ class _PrimaryButtonState extends State<PrimaryButton> {
             width: widget.width,
             height: widget.height,
             decoration: BoxDecoration(
-              color: _disabled ? AppColors.card : AppColors.primary,
+              color: AppColors.white.withValues(alpha: 0.06),
               borderRadius: AppRadius.pill,
-              boxShadow: _disabled
-                  ? AppShadows.none
-                  : AppShadows.colored(
-                      AppColors.primary,
-                      opacity: 0.28,
-                      blur: 22,
-                      offsetY: 10,
-                    ),
+              border: Border.all(
+                color: AppColors.white.withValues(alpha: 0.12),
+              ),
             ),
             child: InkWell(
               borderRadius: AppRadius.pill,
-              splashColor: AppColors.white.withValues(alpha: 0.10),
+              splashColor: AppColors.white.withValues(alpha: 0.08),
               highlightColor: AppColors.transparent,
               onTap: _disabled ? null : widget.onPressed,
               onHighlightChanged: (value) {
@@ -76,20 +70,29 @@ class _PrimaryButtonState extends State<PrimaryButton> {
               child: Center(
                 child: widget.isLoading
                     ? const SizedBox(
-                        width: 22,
-                        height: 22,
+                        width: 20,
+                        height: 20,
                         child: CircularProgressIndicator(
-                          strokeWidth: 2.4,
-                          color: AppColors.white,
+                          strokeWidth: 2.2,
+                          color: AppColors.textPrimary,
                         ),
                       )
                     : Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text(widget.text, style: AppTextStyles.buttonLarge),
+                          Text(
+                            widget.text,
+                            style: AppTextStyles.buttonMedium.copyWith(
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
                           if (widget.icon != null) ...[
-                            const SizedBox(width: 10),
-                            Icon(widget.icon, size: 20, color: AppColors.white),
+                            const SizedBox(width: 8),
+                            Icon(
+                              widget.icon,
+                              size: 18,
+                              color: AppColors.textPrimary,
+                            ),
                           ],
                         ],
                       ),

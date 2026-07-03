@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import './app.dart';
 
-import 'app.dart';
-
-void bootstrap() {
+Future<void> bootstrap() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  runApp(const ProviderScope(child: PetConnectApp()));
+  // 🔥 Future: add services here
+  // await Firebase.initializeApp();
+  // await dotenv.load();
+
+  runApp(const App());
 }
