@@ -1,18 +1,25 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-class SplashScreen extends StatefulWidget {
+import '../../core/routes/routes.dart';
+import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_spacing.dart';
+import '../../core/theme/app_text_styles.dart';
+import '../auth/application/auth_controller.dart';
+
+class SplashScreen extends ConsumerStatefulWidget {
   const SplashScreen({super.key});
 
   @override
-  State<SplashScreen> createState() => _SplashScreenState();
+  ConsumerState<SplashScreen> createState() => _SplashScreenState();
 }
 
-class _SplashScreenState extends State<SplashScreen>
+class _SplashScreenState extends ConsumerState<SplashScreen>
     with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _scale;
-  late Animation<double> _opacity;
+  late final AnimationController _controller;
+  late final Animation<double> _fade;
+  late final Animation<double> _scale;
 
   @override
   void initState() {
@@ -20,26 +27,35 @@ class _SplashScreenState extends State<SplashScreen>
 
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1200),
+      duration: const Duration(milliseconds: 900),
     );
 
-    _scale = Tween<double>(
-      begin: 0.8,
-      end: 1.0,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutBack));
+    _fade = CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic);
 
-    _opacity = Tween<double>(
-      begin: 0.0,
-      end: 1.0,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeIn));
+    _scale = Tween<double>(
+      begin: 0.92,
+      end: 1,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
 
     _controller.forward();
 
-    Future.delayed(const Duration(seconds: 5), () {
-      if (mounted) {
-        context.go('/onboarding');
-      }
-    });
+    _restoreSession();
+  }
+
+  Future<void> _restoreSession() async {
+    await Future.wait([
+      Future<void>.delayed(const Duration(milliseconds: 1200)),
+      ref.read(authControllerProvider.notifier).restore(),
+    ]);
+    if (!mounted) return;
+    final auth = ref.read(authControllerProvider);
+    if (!auth.isAuthenticated) {
+      context.go(AppRoutes.onboarding);
+    } else if (auth.user!.onboardingCompleted) {
+      context.go(AppRoutes.home);
+    } else {
+      context.go(AppRoutes.setupProfile);
+    }
   }
 
   @override
@@ -51,55 +67,48 @@ class _SplashScreenState extends State<SplashScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0B0B0F),
-      body: Center(
-        child: AnimatedBuilder(
-          animation: _controller,
-          builder: (context, child) {
-            return Opacity(
-              opacity: _opacity.value,
-              child: Transform.scale(
-                scale: _scale.value,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 110,
-                      height: 110,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.pink.withValues(alpha: 0.25),
-                            blurRadius: 40,
-                            spreadRadius: 5,
-                          ),
-                        ],
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFF7C3AED), Color(0xFFFF5D8F)],
+      backgroundColor: AppColors.background,
+      body: DecoratedBox(
+        decoration: const BoxDecoration(gradient: AppColors.darkGradient),
+        child: Center(
+          child: FadeTransition(
+            opacity: _fade,
+            child: ScaleTransition(
+              scale: _scale,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 104,
+                    height: 104,
+                    decoration: BoxDecoration(
+                      color: AppColors.primary,
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppColors.primary.withValues(alpha: 0.32),
+                          blurRadius: 42,
+                          spreadRadius: 4,
                         ),
-                      ),
-                      child: const Icon(
-                        Icons.pets,
-                        size: 50,
-                        color: Colors.white,
-                      ),
+                      ],
                     ),
-                    const SizedBox(height: 20),
-                    const Text(
-                      "PetConnect",
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 22,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: 1.2,
-                      ),
+                    child: const Icon(
+                      Icons.pets_rounded,
+                      size: 52,
+                      color: AppColors.white,
                     ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(height: AppSpacing.xl),
+                  Text('PetConnect', style: AppTextStyles.headingLarge),
+                  const SizedBox(height: AppSpacing.sm),
+                  Text(
+                    'Find friends. Share moments.',
+                    style: AppTextStyles.bodySmall,
+                  ),
+                ],
               ),
-            );
-          },
+            ),
+          ),
         ),
       ),
     );

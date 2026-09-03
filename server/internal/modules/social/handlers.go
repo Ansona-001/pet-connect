@@ -1,0 +1,498 @@
+package social
+
+import (
+	"encoding/json"
+	"errors"
+	"net/url"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"petconnect/server/internal/platform/httpx"
+)
+
+type Handler struct {
+	db *pgxpool.Pool
+}
+
+func (h *Handler) listFeed(c *fiber.Ctx) error {
+	return h.listPostsByKind(c, "post")
+}
+
+func (h *Handler) listReels(c *fiber.Ctx) error {
+	return h.listPostsByKind(c, "reel")
+}
+
+func (h *Handler) listPostsByKind(c *fiber.Ctx, kind string) error {
+	userID, err := httpx.UserID(c)
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusUnauthorized, "authentication_required", "A valid access token is required.")
+	}
+	limit, err := pageSize(c.Query("limit"))
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_limit", err.Error())
+	}
+
+	var cursorTime any
+	var cursorID any
+	if raw := strings.TrimSpace(c.Query("cursor")); raw != "" {
+		cursor, decodeErr := decodeTimeCursor(raw)
+		if decodeErr != nil {
+			return httpx.Problem(c, fiber.StatusBadRequest, "invalid_cursor", "The pagination cursor is invalid.")
+		}
+		cursorTime, cursorID = cursor.CreatedAt, cursor.ID
+	}
+
+	rows, err := h.db.Query(c.UserContext(), `
+		SELECT p.id, p.pet_id, pet.name, pet.primary_image_url,
+		       p.author_user_id, author.name, p.kind, p.caption,
+		       p.location_name, p.media_url, p.media_type, p.visibility,
+		       (SELECT count(*) FROM post_likes pl WHERE pl.post_id = p.id),
+		       (SELECT count(*) FROM comments cm WHERE cm.post_id = p.id AND cm.deleted_at IS NULL),
+		       EXISTS (SELECT 1 FROM post_likes pl WHERE pl.post_id = p.id AND pl.user_id = $1),
+		       EXISTS (SELECT 1 FROM post_saves ps WHERE ps.post_id = p.id AND ps.user_id = $1),
+		       p.created_at
+		FROM posts p
+		JOIN pets pet ON pet.id = p.pet_id
+		JOIN users author ON author.id = p.author_user_id
+		WHERE p.deleted_at IS NULL
+		  AND pet.deleted_at IS NULL
+		  AND pet.status = 'active'
+		  AND p.kind = $2
+		  AND (
+		    p.visibility = 'public'
+		    OR p.author_user_id = $1
+		    OR EXISTS (SELECT 1 FROM follows f WHERE f.user_id = $1 AND f.pet_id = p.pet_id)
+		  )
+		  AND ($3::timestamptz IS NULL OR (p.created_at, p.id) < ($3::timestamptz, $4::uuid))
+		ORDER BY p.created_at DESC, p.id DESC
+		LIMIT $5`, userID, kind, cursorTime, cursorID, limit+1)
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "social_query_failed", "The social feed could not be loaded.")
+	}
+	defer rows.Close()
+
+	items := make([]Post, 0, limit)
+	for rows.Next() {
+		var item Post
+		if err := rows.Scan(
+			&item.ID, &item.PetID, &item.PetName, &item.PetImageURL,
+			&item.AuthorUserID, &item.AuthorName, &item.Kind, &item.Caption,
+			&item.LocationName, &item.MediaURL, &item.MediaType, &item.Visibility,
+			&item.LikeCount, &item.CommentCount, &item.LikedByMe, &item.SavedByMe,
+			&item.CreatedAt,
+		); err != nil {
+			return httpx.Problem(c, fiber.StatusInternalServerError, "social_query_failed", "The social feed could not be loaded.")
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "social_query_failed", "The social feed could not be loaded.")
+	}
+
+	nextCursor := ""
+	if len(items) > limit {
+		items = items[:limit]
+		last := items[len(items)-1]
+		nextCursor = encodeTimeCursor(last.CreatedAt, last.ID)
+	}
+	return httpx.OK(c, postPage{Items: items, NextCursor: nextCursor})
+}
+
+func (h *Handler) createPost(c *fiber.Ctx) error {
+	return h.createPostByKind(c, "post")
+}
+
+func (h *Handler) createReel(c *fiber.Ctx) error {
+	return h.createPostByKind(c, "reel")
+}
+
+func (h *Handler) createPostByKind(c *fiber.Ctx, kind string) error {
+	userID, err := httpx.UserID(c)
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusUnauthorized, "authentication_required", "A valid access token is required.")
+	}
+	var request createPostRequest
+	if err := c.BodyParser(&request); err != nil {
+		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_json", "The request body must be valid JSON.")
+	}
+	petID, err := uuid.Parse(strings.TrimSpace(request.PetID))
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_pet_id", "pet_id must be a valid UUID.")
+	}
+	request.Caption = strings.TrimSpace(request.Caption)
+	request.LocationName = strings.TrimSpace(request.LocationName)
+	request.MediaURL = strings.TrimSpace(request.MediaURL)
+	request.MediaType = strings.ToLower(strings.TrimSpace(request.MediaType))
+	request.Visibility = strings.ToLower(strings.TrimSpace(request.Visibility))
+	if request.MediaType == "" {
+		request.MediaType = "image"
+	}
+	if request.Visibility == "" {
+		request.Visibility = "public"
+	}
+	if utf8.RuneCountInString(request.Caption) > 2200 {
+		return httpx.Problem(c, fiber.StatusBadRequest, "caption_too_long", "caption must contain at most 2200 characters.")
+	}
+	if utf8.RuneCountInString(request.LocationName) > 200 {
+		return httpx.Problem(c, fiber.StatusBadRequest, "location_too_long", "location_name must contain at most 200 characters.")
+	}
+	if !validMediaURL(request.MediaURL) {
+		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_media_url", "media_url must be an HTTP(S) URL or an application-relative media path.")
+	}
+	if request.MediaType != "image" && request.MediaType != "video" {
+		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_media_type", "media_type must be image or video.")
+	}
+	if kind == "reel" && request.MediaType != "video" {
+		return httpx.Problem(c, fiber.StatusBadRequest, "reel_requires_video", "A reel must use video media.")
+	}
+	if request.Visibility != "public" && request.Visibility != "followers" {
+		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_visibility", "visibility must be public or followers.")
+	}
+
+	var postID uuid.UUID
+	err = h.db.QueryRow(c.UserContext(), `
+		INSERT INTO posts (pet_id, author_user_id, kind, caption, location_name, media_url, media_type, visibility)
+		SELECT p.id, $1, $3, $4, $5, $6, $7, $8
+		FROM pets p
+		WHERE p.id = $2 AND p.owner_id = $1 AND p.deleted_at IS NULL AND p.status <> 'deleted'
+		RETURNING id`, userID, petID, kind, request.Caption, request.LocationName, request.MediaURL, request.MediaType, request.Visibility).Scan(&postID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return httpx.Problem(c, fiber.StatusForbidden, "pet_not_owned", "The selected pet does not belong to the authenticated user.")
+	}
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "post_create_failed", "The post could not be created.")
+	}
+	post, err := h.postByID(c, userID, postID)
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "post_create_failed", "The post was created but could not be loaded.")
+	}
+	return httpx.Created(c, post)
+}
+
+func (h *Handler) postByID(c *fiber.Ctx, userID, postID uuid.UUID) (Post, error) {
+	var item Post
+	err := h.db.QueryRow(c.UserContext(), `
+		SELECT p.id, p.pet_id, pet.name, pet.primary_image_url,
+		       p.author_user_id, author.name, p.kind, p.caption,
+		       p.location_name, p.media_url, p.media_type, p.visibility,
+		       (SELECT count(*) FROM post_likes pl WHERE pl.post_id = p.id),
+		       (SELECT count(*) FROM comments cm WHERE cm.post_id = p.id AND cm.deleted_at IS NULL),
+		       EXISTS (SELECT 1 FROM post_likes pl WHERE pl.post_id = p.id AND pl.user_id = $1),
+		       EXISTS (SELECT 1 FROM post_saves ps WHERE ps.post_id = p.id AND ps.user_id = $1),
+		       p.created_at
+		FROM posts p
+		JOIN pets pet ON pet.id = p.pet_id
+		JOIN users author ON author.id = p.author_user_id
+		WHERE p.id = $2 AND p.deleted_at IS NULL`, userID, postID).Scan(
+		&item.ID, &item.PetID, &item.PetName, &item.PetImageURL,
+		&item.AuthorUserID, &item.AuthorName, &item.Kind, &item.Caption,
+		&item.LocationName, &item.MediaURL, &item.MediaType, &item.Visibility,
+		&item.LikeCount, &item.CommentCount, &item.LikedByMe, &item.SavedByMe,
+		&item.CreatedAt,
+	)
+	return item, err
+}
+
+func (h *Handler) likePost(c *fiber.Ctx) error {
+	return h.setPostRelation(c, "post_likes", "liked", true)
+}
+
+func (h *Handler) unlikePost(c *fiber.Ctx) error {
+	return h.setPostRelation(c, "post_likes", "liked", false)
+}
+
+func (h *Handler) savePost(c *fiber.Ctx) error {
+	return h.setPostRelation(c, "post_saves", "saved", true)
+}
+
+func (h *Handler) unsavePost(c *fiber.Ctx) error {
+	return h.setPostRelation(c, "post_saves", "saved", false)
+}
+
+func (h *Handler) setPostRelation(c *fiber.Ctx, table, responseField string, enabled bool) error {
+	userID, err := httpx.UserID(c)
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusUnauthorized, "authentication_required", "A valid access token is required.")
+	}
+	postID, err := httpx.UUIDParam(c, "postId")
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_post_id", "postId must be a valid UUID.")
+	}
+	visible, err := h.canViewPost(c, userID, postID)
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "post_query_failed", "The post could not be loaded.")
+	}
+	if !visible {
+		return httpx.Problem(c, fiber.StatusNotFound, "post_not_found", "The requested post was not found.")
+	}
+
+	if enabled {
+		_, err = h.db.Exec(c.UserContext(), "INSERT INTO "+table+" (user_id, post_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", userID, postID)
+	} else {
+		_, err = h.db.Exec(c.UserContext(), "DELETE FROM "+table+" WHERE user_id = $1 AND post_id = $2", userID, postID)
+	}
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "post_update_failed", "The post could not be updated.")
+	}
+	return httpx.OK(c, fiber.Map{responseField: enabled})
+}
+
+func (h *Handler) canViewPost(c *fiber.Ctx, userID, postID uuid.UUID) (bool, error) {
+	var visible bool
+	err := h.db.QueryRow(c.UserContext(), `
+		SELECT EXISTS (
+		  SELECT 1 FROM posts p
+		  WHERE p.id = $2 AND p.deleted_at IS NULL
+		    AND (p.visibility = 'public' OR p.author_user_id = $1
+		      OR EXISTS (SELECT 1 FROM follows f WHERE f.user_id = $1 AND f.pet_id = p.pet_id))
+		)`, userID, postID).Scan(&visible)
+	return visible, err
+}
+
+func (h *Handler) listComments(c *fiber.Ctx) error {
+	userID, err := httpx.UserID(c)
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusUnauthorized, "authentication_required", "A valid access token is required.")
+	}
+	postID, err := httpx.UUIDParam(c, "postId")
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_post_id", "postId must be a valid UUID.")
+	}
+	visible, err := h.canViewPost(c, userID, postID)
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "comment_query_failed", "Comments could not be loaded.")
+	}
+	if !visible {
+		return httpx.Problem(c, fiber.StatusNotFound, "post_not_found", "The requested post was not found.")
+	}
+	limit, err := pageSize(c.Query("limit"))
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_limit", err.Error())
+	}
+	var cursorTime any
+	var cursorID any
+	if raw := strings.TrimSpace(c.Query("cursor")); raw != "" {
+		cursor, decodeErr := decodeTimeCursor(raw)
+		if decodeErr != nil {
+			return httpx.Problem(c, fiber.StatusBadRequest, "invalid_cursor", "The pagination cursor is invalid.")
+		}
+		cursorTime, cursorID = cursor.CreatedAt, cursor.ID
+	}
+
+	rows, err := h.db.Query(c.UserContext(), `
+		SELECT cm.id, cm.post_id, cm.user_id, u.name, u.profile_photo_url,
+		       cm.body, cm.created_at, cm.updated_at
+		FROM comments cm
+		JOIN users u ON u.id = cm.user_id
+		WHERE cm.post_id = $1 AND cm.deleted_at IS NULL
+		  AND ($2::timestamptz IS NULL OR (cm.created_at, cm.id) < ($2::timestamptz, $3::uuid))
+		ORDER BY cm.created_at DESC, cm.id DESC
+		LIMIT $4`, postID, cursorTime, cursorID, limit+1)
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "comment_query_failed", "Comments could not be loaded.")
+	}
+	defer rows.Close()
+
+	items := make([]Comment, 0, limit)
+	for rows.Next() {
+		var item Comment
+		if err := rows.Scan(&item.ID, &item.PostID, &item.UserID, &item.AuthorName, &item.AuthorPhotoURL, &item.Body, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return httpx.Problem(c, fiber.StatusInternalServerError, "comment_query_failed", "Comments could not be loaded.")
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "comment_query_failed", "Comments could not be loaded.")
+	}
+	nextCursor := ""
+	if len(items) > limit {
+		items = items[:limit]
+		last := items[len(items)-1]
+		nextCursor = encodeTimeCursor(last.CreatedAt, last.ID)
+	}
+	return httpx.OK(c, commentPage{Items: items, NextCursor: nextCursor})
+}
+
+func (h *Handler) createComment(c *fiber.Ctx) error {
+	userID, err := httpx.UserID(c)
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusUnauthorized, "authentication_required", "A valid access token is required.")
+	}
+	postID, err := httpx.UUIDParam(c, "postId")
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_post_id", "postId must be a valid UUID.")
+	}
+	var request createCommentRequest
+	if err := c.BodyParser(&request); err != nil {
+		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_json", "The request body must be valid JSON.")
+	}
+	request.Body = strings.TrimSpace(request.Body)
+	if length := utf8.RuneCountInString(request.Body); length < 1 || length > 2000 {
+		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_comment", "body must contain between 1 and 2000 characters.")
+	}
+	visible, err := h.canViewPost(c, userID, postID)
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "comment_create_failed", "The comment could not be created.")
+	}
+	if !visible {
+		return httpx.Problem(c, fiber.StatusNotFound, "post_not_found", "The requested post was not found.")
+	}
+
+	var item Comment
+	err = h.db.QueryRow(c.UserContext(), `
+		WITH inserted AS (
+		  INSERT INTO comments (post_id, user_id, body)
+		  VALUES ($1, $2, $3)
+		  RETURNING id, post_id, user_id, body, created_at, updated_at
+		)
+		SELECT i.id, i.post_id, i.user_id, u.name, u.profile_photo_url,
+		       i.body, i.created_at, i.updated_at
+		FROM inserted i JOIN users u ON u.id = i.user_id`, postID, userID, request.Body).Scan(
+		&item.ID, &item.PostID, &item.UserID, &item.AuthorName, &item.AuthorPhotoURL,
+		&item.Body, &item.CreatedAt, &item.UpdatedAt,
+	)
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "comment_create_failed", "The comment could not be created.")
+	}
+	return httpx.Created(c, item)
+}
+
+func (h *Handler) listStories(c *fiber.Ctx) error {
+	userID, err := httpx.UserID(c)
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusUnauthorized, "authentication_required", "A valid access token is required.")
+	}
+	limit, err := pageSize(c.Query("limit"))
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_limit", err.Error())
+	}
+	var cursorTime any
+	var cursorID any
+	if raw := strings.TrimSpace(c.Query("cursor")); raw != "" {
+		cursor, decodeErr := decodeTimeCursor(raw)
+		if decodeErr != nil {
+			return httpx.Problem(c, fiber.StatusBadRequest, "invalid_cursor", "The pagination cursor is invalid.")
+		}
+		cursorTime, cursorID = cursor.CreatedAt, cursor.ID
+	}
+
+	rows, err := h.db.Query(c.UserContext(), `
+		SELECT s.id, s.pet_id, p.name, p.primary_image_url, u.name,
+		       s.media_url, s.media_type, s.text_overlay, s.expires_at, s.created_at
+		FROM stories s
+		JOIN pets p ON p.id = s.pet_id
+		JOIN users u ON u.id = s.author_user_id
+		WHERE s.deleted_at IS NULL AND s.expires_at > now()
+		  AND p.deleted_at IS NULL AND p.status = 'active'
+		  AND (s.author_user_id = $1 OR EXISTS (
+		    SELECT 1 FROM follows f WHERE f.user_id = $1 AND f.pet_id = s.pet_id
+		  ) OR NOT EXISTS (SELECT 1 FROM follows WHERE user_id = $1))
+		  AND ($2::timestamptz IS NULL OR (s.created_at, s.id) < ($2::timestamptz, $3::uuid))
+		ORDER BY s.created_at DESC, s.id DESC
+		LIMIT $4`, userID, cursorTime, cursorID, limit+1)
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "story_query_failed", "Stories could not be loaded.")
+	}
+	defer rows.Close()
+	items := make([]Story, 0, limit)
+	for rows.Next() {
+		var item Story
+		var overlay []byte
+		if err := rows.Scan(&item.ID, &item.PetID, &item.PetName, &item.PetImageURL, &item.AuthorName, &item.MediaURL, &item.MediaType, &overlay, &item.ExpiresAt, &item.CreatedAt); err != nil {
+			return httpx.Problem(c, fiber.StatusInternalServerError, "story_query_failed", "Stories could not be loaded.")
+		}
+		item.TextOverlay = map[string]any{}
+		if len(overlay) > 0 && json.Unmarshal(overlay, &item.TextOverlay) != nil {
+			return httpx.Problem(c, fiber.StatusInternalServerError, "story_query_failed", "Stories could not be loaded.")
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "story_query_failed", "Stories could not be loaded.")
+	}
+	nextCursor := ""
+	if len(items) > limit {
+		items = items[:limit]
+		last := items[len(items)-1]
+		nextCursor = encodeTimeCursor(last.CreatedAt, last.ID)
+	}
+	return httpx.OK(c, storyPage{Items: items, NextCursor: nextCursor})
+}
+
+func (h *Handler) createStory(c *fiber.Ctx) error {
+	userID, err := httpx.UserID(c)
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusUnauthorized, "authentication_required", "A valid access token is required.")
+	}
+	var request createStoryRequest
+	if err := c.BodyParser(&request); err != nil {
+		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_json", "The request body must be valid JSON.")
+	}
+	petID, err := uuid.Parse(strings.TrimSpace(request.PetID))
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_pet_id", "pet_id must be a valid UUID.")
+	}
+	request.MediaURL = strings.TrimSpace(request.MediaURL)
+	request.MediaType = strings.ToLower(strings.TrimSpace(request.MediaType))
+	if request.MediaType == "" {
+		request.MediaType = "image"
+	}
+	if !validMediaURL(request.MediaURL) {
+		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_media_url", "media_url must be an HTTP(S) URL or an application-relative media path.")
+	}
+	if request.MediaType != "image" && request.MediaType != "video" {
+		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_media_type", "media_type must be image or video.")
+	}
+	if request.TextOverlay == nil {
+		request.TextOverlay = map[string]any{}
+	}
+	overlay, err := json.Marshal(request.TextOverlay)
+	if err != nil || len(overlay) > 16*1024 {
+		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_text_overlay", "text_overlay is invalid or too large.")
+	}
+
+	var storyID uuid.UUID
+	err = h.db.QueryRow(c.UserContext(), `
+		INSERT INTO stories (pet_id, author_user_id, media_url, media_type, text_overlay)
+		SELECT p.id, $1, $3, $4, $5::jsonb
+		FROM pets p
+		WHERE p.id = $2 AND p.owner_id = $1 AND p.deleted_at IS NULL AND p.status <> 'deleted'
+		RETURNING id`, userID, petID, request.MediaURL, request.MediaType, overlay).Scan(&storyID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return httpx.Problem(c, fiber.StatusForbidden, "pet_not_owned", "The selected pet does not belong to the authenticated user.")
+	}
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "story_create_failed", "The story could not be created.")
+	}
+
+	var item Story
+	var storedOverlay []byte
+	err = h.db.QueryRow(c.UserContext(), `
+		SELECT s.id, s.pet_id, p.name, p.primary_image_url, u.name,
+		       s.media_url, s.media_type, s.text_overlay, s.expires_at, s.created_at
+		FROM stories s JOIN pets p ON p.id = s.pet_id JOIN users u ON u.id = s.author_user_id
+		WHERE s.id = $1`, storyID).Scan(&item.ID, &item.PetID, &item.PetName, &item.PetImageURL, &item.AuthorName, &item.MediaURL, &item.MediaType, &storedOverlay, &item.ExpiresAt, &item.CreatedAt)
+	if err != nil || json.Unmarshal(storedOverlay, &item.TextOverlay) != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "story_create_failed", "The story was created but could not be loaded.")
+	}
+	return httpx.Created(c, item)
+}
+
+func validMediaURL(value string) bool {
+	if value == "" || len(value) > 4096 {
+		return false
+	}
+	if strings.HasPrefix(value, "/") && !strings.HasPrefix(value, "//") {
+		return true
+	}
+	parsed, err := url.ParseRequestURI(value)
+	if err != nil || parsed.Host == "" {
+		return false
+	}
+	return parsed.Scheme == "https" || parsed.Scheme == "http"
+}

@@ -1,5 +1,5 @@
 name: frontend
-description: "A new Flutter project."
+description: "Pet-first social discovery, matching, and community app."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: "none" # Remove this line if you wish to publish to pub.dev
@@ -42,6 +42,11 @@ dependencies:
   # HTTP
   dio: ^5.9.0
 
+  # Secure sessions and realtime
+  flutter_secure_storage: ^9.2.4
+  uuid: ^4.5.1
+  web_socket_channel: ^3.0.3
+
   # Fonts
   google_fonts: ^6.3.1
 
@@ -50,6 +55,7 @@ dependencies:
 
   # Images
   cached_network_image: ^3.4.1
+  image_picker: ^1.2.0
 
   # SVG
   flutter_svg: ^2.2.0
@@ -84,10 +90,8 @@ flutter:
   #   - images/a_dot_ham.jpeg
 
   assets:
-    - assets/images/
-    - assets/icons/
-    - assets/logos/
-    - assets/animations/
+    - assets/images/onboarding/
+    - assets/images/content/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

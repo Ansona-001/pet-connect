@@ -3,13 +3,17 @@ import 'package:flutter/material.dart';
 class OnboardingItem {
   const OnboardingItem({
     required this.title,
+    required this.highlight,
     required this.subtitle,
     required this.icon,
-    required this.gradientColors,
+    required this.accentColor,
+    required this.imageAsset,
   });
 
   final String title;
+  final String highlight;
   final String subtitle;
   final IconData icon;
-  final List<Color> gradientColors;
+  final Color accentColor;
+  final String imageAsset;
 }

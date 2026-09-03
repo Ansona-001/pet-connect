@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_text_styles.dart';
+import '../../../../shared/widgets/cards/glass_card.dart';
 import '../models/onboarding_item.dart';
 
 class OnboardingPage extends StatelessWidget {
@@ -13,15 +15,20 @@ class OnboardingPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final compactHeight = MediaQuery.sizeOf(context).height < 700;
+
     return Stack(
       children: [
         Positioned.fill(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: item.gradientColors,
+          child: Image.asset(
+            item.imageAsset,
+            fit: BoxFit.cover,
+            alignment: Alignment.topCenter,
+            cacheWidth: 1440,
+            errorBuilder: (context, error, stackTrace) => ColoredBox(
+              color: AppColors.surface,
+              child: Center(
+                child: Icon(item.icon, size: 120, color: item.accentColor),
               ),
             ),
           ),
@@ -34,57 +41,60 @@ class OnboardingPage extends StatelessWidget {
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
                 colors: [
-                  AppColors.black.withValues(alpha: 0.05),
-                  AppColors.black.withValues(alpha: 0.45),
-                  AppColors.black.withValues(alpha: 0.92),
+                  AppColors.black.withValues(alpha: 0.08),
+                  AppColors.background.withValues(alpha: 0.30),
+                  AppColors.background.withValues(alpha: 0.98),
                 ],
+                stops: const [0, 0.45, 0.84],
               ),
             ),
           ),
         ),
 
-        Center(
-          child:
-              Icon(
-                    item.icon,
-                    size: 140,
-                    color: AppColors.white.withValues(alpha: 0.92),
-                  )
-                  .animate()
-                  .fadeIn(duration: 500.ms)
-                  .scale(
-                    begin: const Offset(0.85, 0.85),
-                    end: const Offset(1, 1),
-                    duration: 500.ms,
-                    curve: Curves.easeOutCubic,
-                  ),
-        ),
-
         Positioned(
-          left: AppSpacing.xxl,
-          right: AppSpacing.xxl,
-          bottom: 150,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                item.title,
-                style: AppTextStyles.displayMedium,
-              ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.12, end: 0),
-
-              const SizedBox(height: AppSpacing.lg),
-
-              Text(
-                    item.subtitle,
-                    style: AppTextStyles.bodyMedium.copyWith(
-                      color: AppColors.textSecondary,
-                    ),
-                  )
-                  .animate(delay: 120.ms)
-                  .fadeIn(duration: 400.ms)
-                  .slideY(begin: 0.12, end: 0),
-            ],
-          ),
+          left: AppSpacing.xl,
+          right: AppSpacing.xl,
+          bottom: compactHeight ? 140 : 180,
+          child: GlassCard(
+            borderRadius: AppRadius.xxl,
+            padding: EdgeInsets.all(
+              compactHeight ? AppSpacing.lg : AppSpacing.xxl,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                CircleAvatar(
+                  radius: 25,
+                  backgroundColor: item.accentColor,
+                  child: Icon(item.icon, color: AppColors.white, size: 26),
+                ),
+                SizedBox(
+                  height: compactHeight ? AppSpacing.md : AppSpacing.xxl,
+                ),
+                RichText(
+                  text: TextSpan(
+                    style: AppTextStyles.displaySmall,
+                    children: [
+                      TextSpan(text: item.title),
+                      TextSpan(
+                        text: item.highlight,
+                        style: AppTextStyles.displaySmall.copyWith(
+                          color: item.accentColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.lg),
+                Text(
+                  item.subtitle,
+                  style: AppTextStyles.bodyMedium.copyWith(
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ).animate().fadeIn(duration: 420.ms).slideY(begin: 0.12, end: 0),
         ),
       ],
     );

@@ -43,3 +43,21 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.jks
+key.properties
+*service-account*.json
+GoogleService-Info.plist
+google-services.json
+
+# Backend runtime data
+/server/tmp/
+/server/uploads/
+/server/.gocache/

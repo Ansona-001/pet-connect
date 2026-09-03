@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import './app.dart';
 
 Future<void> bootstrap() async {
@@ -8,5 +9,5 @@ Future<void> bootstrap() async {
   // await Firebase.initializeApp();
   // await dotenv.load();
 
-  runApp(const App());
+  runApp(const ProviderScope(child: App()));
 }

@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+import '../../../../core/routes/routes.dart';
 
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
@@ -22,34 +24,38 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   static const List<OnboardingItem> _items = [
     OnboardingItem(
-      title: 'Meet amazing pets near you.',
-      subtitle:
-          'Discover playful companions, local pet lovers, and new friends for your furry family.',
+      title: 'A better world for\n ',
+      highlight: 'pets and their people.',
+      subtitle: 'Discover, connect, and share life with pet lovers near you.',
       icon: Icons.pets_rounded,
-      gradientColors: [Color(0xFF7C3AED), Color(0xFFFF4D8D)],
+      accentColor: AppColors.primary,
+      imageAsset: 'assets/images/onboarding/onboarding_1.jpg',
     ),
     OnboardingItem(
-      title: 'Swipe. Match. Connect.',
+      title: 'Discover amazing\n',
+      highlight: 'pet lovers nearby.',
       subtitle:
-          'Find compatible pets by personality, lifestyle, interests, and location.',
-      icon: Icons.favorite_rounded,
-      gradientColors: [Color(0xFFFF4D8D), Color(0xFFFB7185)],
+          'Find new friends, connect with pet parents, and grow your pet community.',
+      icon: Icons.groups_rounded,
+      accentColor: AppColors.success,
+      imageAsset: 'assets/images/content/pet_playdate.png',
     ),
     OnboardingItem(
-      title: 'Share moments that matter.',
+      title: 'Share moments\n',
+      highlight: 'they’ll never forget.',
       subtitle:
-          'Post stories, reels, photos, and memories with a community that loves pets.',
-      icon: Icons.camera_alt_rounded,
-      gradientColors: [Color(0xFF0EA5E9), Color(0xFF7C3AED)],
+          'Post updates, photos, and stories that celebrate your pet’s everyday adventures.',
+      icon: Icons.star_rounded,
+      accentColor: AppColors.accent,
+      imageAsset: 'assets/images/onboarding/onboarding_3.jpg',
     ),
   ];
 
   bool get _isLastPage => _currentIndex == _items.length - 1;
 
-  void _goNext() {
+  void _next() {
     if (_isLastPage) {
-      // TODO: Navigate to login once auth screen is ready.
-      debugPrint('Onboarding completed');
+      context.go(AppRoutes.login);
       return;
     }
 
@@ -60,11 +66,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   }
 
   void _skip() {
-    _pageController.animateToPage(
-      _items.length - 1,
-      duration: const Duration(milliseconds: 320),
-      curve: Curves.easeOutCubic,
-    );
+    context.go(AppRoutes.login);
   }
 
   @override
@@ -75,6 +77,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final activeColor = _items[_currentIndex].accentColor;
+
     return Scaffold(
       backgroundColor: AppColors.background,
       body: Stack(
@@ -97,7 +101,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 padding: const EdgeInsets.all(AppSpacing.lg),
                 child: SecondaryButton(
                   text: 'Skip',
-                  width: 88,
+                  width: 86,
                   height: 42,
                   onPressed: _skip,
                 ),
@@ -106,21 +110,27 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           ),
 
           Positioned(
-            left: AppSpacing.xxl,
-            right: AppSpacing.xxl,
-            bottom: AppSpacing.xxl,
-            child: Column(
-              children: [
-                PageIndicator(
-                  length: _items.length,
-                  currentIndex: _currentIndex,
-                ),
-                const SizedBox(height: AppSpacing.xxl),
-                PrimaryButton(
-                  text: _isLastPage ? 'Get Started' : 'Continue',
-                  onPressed: _goNext,
-                ),
-              ],
+            left: AppSpacing.xl,
+            right: AppSpacing.xl,
+            bottom: 0,
+            child: SafeArea(
+              top: false,
+              minimum: const EdgeInsets.only(bottom: AppSpacing.xxl),
+              child: Column(
+                children: [
+                  PageIndicator(
+                    length: _items.length,
+                    currentIndex: _currentIndex,
+                    activeColor: activeColor,
+                  ),
+                  const SizedBox(height: AppSpacing.xxl),
+                  PrimaryButton(
+                    text: _isLastPage ? 'Get Started' : 'Next',
+                    icon: Icons.arrow_forward_rounded,
+                    onPressed: _next,
+                  ),
+                ],
+              ),
             ),
           ),
         ],
