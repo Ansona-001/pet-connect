@@ -39,7 +39,13 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
 
     _controller.forward();
 
-    _restoreSession();
+    // Deferred to a microtask: now that the router is built inside a
+    // Provider (goRouterProvider) and evaluates its initial redirect while
+    // the app's widget tree is first building, calling restore() directly
+    // here would mutate authControllerProvider's state synchronously from
+    // within that same build phase, which Riverpod forbids ("Tried to
+    // modify a provider while the widget tree was building").
+    Future.microtask(_restoreSession);
   }
 
   Future<void> _restoreSession() async {
