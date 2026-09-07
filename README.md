@@ -48,6 +48,8 @@ Password: PetConnect123!
 
 The login screen is prefilled with this account. You can also select “New here? Create an account”; registration, onboarding, and the first pet are written to PostgreSQL.
 
+This account (and the rest of the sample content) is written by `server/cmd/seed`, a standalone command that `scripts\run-api.ps1` runs automatically on every start — it's a no-op if the data already exists. The command refuses to run unless `APP_ENV` is `local` or `test`, so it can never seed a shared/staging/production database (see `docs/adr/0006-migration-strategy.md`). To seed manually: `cd server; go run ./cmd/seed`.
+
 ## Local services
 
 | Service | Address |
