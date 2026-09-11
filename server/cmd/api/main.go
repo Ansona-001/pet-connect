@@ -36,6 +36,7 @@ import (
 	"petconnect/server/internal/platform/authjwt"
 	"petconnect/server/internal/platform/database"
 	"petconnect/server/internal/platform/httpx"
+	"petconnect/server/internal/platform/mailer"
 	"petconnect/server/internal/platform/storage"
 	"petconnect/server/internal/realtime"
 	"petconnect/server/migrations"
@@ -142,7 +143,7 @@ func run() error {
 	app.Static("/media/demo", cfg.DemoAssetDir, fiber.Static{MaxAge: 86400})
 
 	v1 := app.Group("/v1")
-	auth.RegisterRoutes(v1, db, tokens, cfg.RefreshTokenTTL)
+	auth.RegisterRoutes(v1, db, tokens, cfg.RefreshTokenTTL, mailer.LogSender{})
 	// The socket route authenticates with a single-use ticket, so mount it
 	// before the bearer middleware that protects the rest of /v1.
 	realtimeServer.RegisterSocketRoute(v1)

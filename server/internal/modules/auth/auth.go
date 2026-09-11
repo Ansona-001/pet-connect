@@ -15,6 +15,7 @@ import (
 
 	"petconnect/server/internal/platform/authjwt"
 	"petconnect/server/internal/platform/httpx"
+	"petconnect/server/internal/platform/mailer"
 )
 
 const (
@@ -34,16 +35,17 @@ type Handler struct {
 	tokens     *authjwt.Manager
 	refreshTTL time.Duration
 	clock      func() time.Time
+	mailer     mailer.Sender
 }
 
 // New constructs the authentication module.
-func New(db *pgxpool.Pool, tokens *authjwt.Manager, refreshTTL time.Duration) *Handler {
-	return &Handler{db: db, tokens: tokens, refreshTTL: refreshTTL, clock: time.Now}
+func New(db *pgxpool.Pool, tokens *authjwt.Manager, refreshTTL time.Duration, sender mailer.Sender) *Handler {
+	return &Handler{db: db, tokens: tokens, refreshTTL: refreshTTL, clock: time.Now, mailer: sender}
 }
 
 // RegisterRoutes mounts public authentication routes on a router rooted at /v1.
-func RegisterRoutes(router fiber.Router, db *pgxpool.Pool, tokens *authjwt.Manager, refreshTTL time.Duration) {
-	New(db, tokens, refreshTTL).RegisterRoutes(router)
+func RegisterRoutes(router fiber.Router, db *pgxpool.Pool, tokens *authjwt.Manager, refreshTTL time.Duration, sender mailer.Sender) {
+	New(db, tokens, refreshTTL, sender).RegisterRoutes(router)
 }
 
 // RegisterRoutes mounts this handler's public routes.
@@ -53,6 +55,8 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	auth.Post("/login", h.login)
 	auth.Post("/refresh", h.refresh)
 	auth.Post("/logout", h.logout)
+	auth.Post("/verify-email", h.verifyEmail)
+	auth.Post("/resend-verification", h.resendVerification)
 }
 
 type registerRequest struct {
@@ -141,9 +145,22 @@ func (h *Handler) register(c *fiber.Ctx) error {
 	if err != nil {
 		return internalProblem(c)
 	}
+
+	// Issued in the same transaction as the account row, so the two are
+	// atomic — a client never sees a created account with no way to
+	// verify it. Sending is best-effort and happens after commit: no
+	// transactional email provider is configured yet (brief §18), so this
+	// currently just logs the token (mailer.LogSender) without failing
+	// registration.
+	verificationToken, err := h.issueEmailVerification(c.UserContext(), tx, user.ID, h.clock().UTC())
+	if err != nil {
+		return internalProblem(c)
+	}
+
 	if err := tx.Commit(c.UserContext()); err != nil {
 		return internalProblem(c)
 	}
+	_ = h.mailer.SendVerificationEmail(user.Email, verificationToken)
 
 	c.Set(fiber.HeaderCacheControl, "no-store")
 	return httpx.Created(c, result)
