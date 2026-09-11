@@ -83,19 +83,62 @@ final goRouterProvider = Provider<GoRouter>((ref) {
   );
 });
 
+/// The location a redirect bounced the user away from while unauthenticated,
+/// so it can be restored after they sign back in — see [_redirect] and
+/// `LoginScreen._continue`. `null` means there's nothing to restore (the
+/// default post-login destination applies).
+final pendingRedirectProvider = StateProvider<String?>((ref) => null);
+
+/// Locations that carry no useful "destination" to return to — capturing
+/// one of these as a pending redirect would just bounce the user right back
+/// into the auth flow after they log in.
+const _authFlowLocations = {
+  AppRoutes.splash,
+  AppRoutes.onboarding,
+  AppRoutes.login,
+  AppRoutes.setupProfile,
+};
+
+/// The single source of truth for "given this auth state, and no specific
+/// location in mind, where should the app be?" — shared by [_redirect]
+/// below and by [SplashScreen] once `restore()` resolves. This used to be
+/// duplicated (splash had its own hardcoded `if (!isAuthenticated) go to
+/// onboarding` independent of `_redirect`'s rules), and the two silently
+/// disagreed the moment `sessionExpired` was added: splash's copy didn't
+/// know about it, so a dead session was sent to the onboarding pitch
+/// screens instead of `/login` every time splash — not `_redirect` — was
+/// the one deciding, i.e. on every cold start and reload. Route any future
+/// destination logic through this one function instead of re-deciding it
+/// at each call site.
+String defaultDestinationFor(AuthState auth) {
+  if (!auth.isAuthenticated) {
+    return auth.sessionExpired ? AppRoutes.login : AppRoutes.onboarding;
+  }
+  if (!auth.user!.onboardingCompleted) return AppRoutes.setupProfile;
+  return AppRoutes.home;
+}
+
+void _capturePendingLocation(Ref ref, String location) {
+  if (_authFlowLocations.contains(location)) return;
+  ref.read(pendingRedirectProvider.notifier).state = location;
+}
+
 /// Decides whether [location] may be shown given the current [AuthState],
 /// returning the location to redirect to instead, or `null` to allow it.
 ///
 /// Rules (checked in order):
-/// 1. Session restore hasn't finished yet (`!auth.initialized`) — force
-///    everything to `/splash`, which is what actually triggers `restore()`.
+/// 1. Session restore hasn't finished yet (`!auth.initialized`) — capture
+///    [location] as the pending redirect (so a cold deep link isn't lost)
+///    and force everything to `/splash`, which is what actually triggers
+///    `restore()`.
 /// 2. Already on `/splash` — never force it away. [SplashScreen] owns its
 ///    own minimum display duration and navigates itself once `restore()`
-///    resolves; redirecting here too would race it and cut its animation
-///    short.
+///    resolves (via [defaultDestinationFor]); redirecting here too would
+///    race it and cut its animation short.
 /// 3. Not authenticated — only onboarding/login are reachable; anything
 ///    else (including a protected route reached via deep link, back
-///    button, or manual URL entry) bounces to onboarding. New protected
+///    button, or manual URL entry) is captured as the pending redirect and
+///    bounces to whatever [defaultDestinationFor] says. New protected
 ///    routes are safe by default: they're blocked unless added to
 ///    `publicLocations`, not the other way around.
 /// 4. Authenticated but onboarding isn't complete — only setup-profile is
@@ -107,6 +150,7 @@ String? _redirect(Ref ref, String location) {
   final auth = ref.read(authControllerProvider);
 
   if (!auth.initialized) {
+    _capturePendingLocation(ref, location);
     return location == AppRoutes.splash ? null : AppRoutes.splash;
   }
 
@@ -114,7 +158,9 @@ String? _redirect(Ref ref, String location) {
 
   const publicLocations = {AppRoutes.onboarding, AppRoutes.login};
   if (!auth.isAuthenticated) {
-    return publicLocations.contains(location) ? null : AppRoutes.onboarding;
+    if (publicLocations.contains(location)) return null;
+    _capturePendingLocation(ref, location);
+    return defaultDestinationFor(auth);
   }
 
   final needsOnboarding = !auth.user!.onboardingCompleted;

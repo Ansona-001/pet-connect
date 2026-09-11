@@ -3,6 +3,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../../core/routes/app_router.dart' show pendingRedirectProvider;
 import '../../../../core/routes/routes.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_radius.dart';
@@ -64,9 +65,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             password: _passwordController.text,
           );
     if (!mounted || user == null) return;
-    context.go(
-      user.onboardingCompleted ? AppRoutes.home : AppRoutes.setupProfile,
-    );
+
+    if (!user.onboardingCompleted) {
+      context.go(AppRoutes.setupProfile);
+      return;
+    }
+
+    // Restore whatever protected route the redirect bounced them away
+    // from (see app_router.dart's `_redirect`), if there was one.
+    final pendingNotifier = ref.read(pendingRedirectProvider.notifier);
+    final pending = pendingNotifier.state;
+    pendingNotifier.state = null;
+    context.go(pending ?? AppRoutes.home);
   }
 
   @override

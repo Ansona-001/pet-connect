@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../core/routes/routes.dart';
+import '../../core/routes/app_router.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/app_text_styles.dart';
@@ -55,13 +55,26 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
     ]);
     if (!mounted) return;
     final auth = ref.read(authControllerProvider);
-    if (!auth.isAuthenticated) {
-      context.go(AppRoutes.onboarding);
-    } else if (auth.user!.onboardingCompleted) {
-      context.go(AppRoutes.home);
-    } else {
-      context.go(AppRoutes.setupProfile);
+
+    // Prefer restoring whatever the user originally tried to reach (a cold
+    // deep link, captured by the router's redirect before it forced this
+    // screen to mount) over the generic default — but only once auth
+    // actually allows landing there; someone who still needs to complete
+    // onboarding goes through setup-profile regardless of what they first
+    // asked for.
+    final pendingNotifier = ref.read(pendingRedirectProvider.notifier);
+    final pending = pendingNotifier.state;
+    final canRestorePending =
+        pending != null &&
+        auth.isAuthenticated &&
+        auth.user!.onboardingCompleted;
+    if (canRestorePending) {
+      pendingNotifier.state = null;
+      context.go(pending);
+      return;
     }
+
+    context.go(defaultDestinationFor(auth));
   }
 
   @override

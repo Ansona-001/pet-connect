@@ -52,10 +52,16 @@ class AuthRepository {
 
   Future<AuthUser> restore() async {
     try {
+      // Checked before attempting the refresh: a stored token that gets
+      // rejected is a session that died ('session_expired'), which is a
+      // different situation from never having signed in at all
+      // ('no_session') — AuthController.restore() shows a "please sign in
+      // again" message only for the former.
+      final hadStoredSession = await _api.hasStoredRefreshToken();
       if (!await _api.refreshSession()) {
-        throw const ApiException(
+        throw ApiException(
           'Your session has expired.',
-          code: 'session_expired',
+          code: hadStoredSession ? 'session_expired' : 'no_session',
         );
       }
       return me();
