@@ -54,7 +54,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   Future<void> _continue() async {
     final controller = ref.read(authControllerProvider.notifier);
-    final user = _createAccount
+    final wasRegistering = _createAccount;
+    final user = wasRegistering
         ? await controller.register(
             email: _emailController.text.trim(),
             password: _passwordController.text,
@@ -65,6 +66,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             password: _passwordController.text,
           );
     if (!mounted || user == null) return;
+
+    // A fresh registration already has a verification email on the way
+    // (server/internal/modules/auth/auth.go's register() issues one in the
+    // same transaction as the account) — surface that step before setup,
+    // rather than only on a subsequent login. Not a hard gate: the screen
+    // itself lets the user continue without verifying.
+    if (wasRegistering) {
+      context.go(
+        '${AppRoutes.verifyEmail}?email=${Uri.encodeQueryComponent(user.email)}',
+      );
+      return;
+    }
 
     if (!user.onboardingCompleted) {
       context.go(AppRoutes.setupProfile);
@@ -307,56 +320,6 @@ class _LoginBackground extends StatelessWidget {
             size: 260,
             color: AppColors.accent.withValues(alpha: 0.22),
           ),
-        ),
-
-        Positioned(
-          top: 170,
-          left: 28,
-          right: 28,
-          child:
-              Container(
-                    height: 190,
-                    decoration: BoxDecoration(
-                      borderRadius: AppRadius.xxl,
-                      color: AppColors.card,
-                      boxShadow: AppShadows.card,
-                    ),
-                    child: Stack(
-                      children: [
-                        Positioned.fill(
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              borderRadius: AppRadius.xxl,
-                              gradient: LinearGradient(
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                                colors: [
-                                  AppColors.primary.withValues(alpha: 0.22),
-                                  AppColors.accent.withValues(alpha: 0.18),
-                                  AppColors.card,
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                        Center(
-                          child: Icon(
-                            Icons.pets_rounded,
-                            size: 92,
-                            color: AppColors.white.withValues(alpha: 0.92),
-                          ),
-                        ),
-                      ],
-                    ),
-                  )
-                  .animate()
-                  .fadeIn(duration: 500.ms)
-                  .scale(
-                    begin: const Offset(0.94, 0.94),
-                    end: const Offset(1, 1),
-                    duration: 500.ms,
-                    curve: Curves.easeOutCubic,
-                  ),
         ),
       ],
     );

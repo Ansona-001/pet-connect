@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../features/auth/application/auth_controller.dart';
 import '../../features/auth/presentation/screens/login_screen.dart';
+import '../../features/auth/presentation/screens/verify_email_screen.dart';
 import '../../features/onboarding/presentation/screens/onboarding_screen.dart';
 import '../../features/onboarding/presentation/screens/profile_setup_screen.dart';
 import '../../features/social/presentation/screens/chat_screen.dart';
@@ -45,6 +46,18 @@ final goRouterProvider = Provider<GoRouter>((ref) {
         path: AppRoutes.login,
         pageBuilder: (context, state) {
           return _slideFadePage(state: state, child: const LoginScreen());
+        },
+      ),
+      GoRoute(
+        path: AppRoutes.verifyEmail,
+        pageBuilder: (context, state) {
+          return _slideFadePage(
+            state: state,
+            child: VerifyEmailScreen(
+              email: state.uri.queryParameters['email'],
+              token: state.uri.queryParameters['token'],
+            ),
+          );
         },
       ),
       GoRoute(
@@ -96,6 +109,7 @@ const _authFlowLocations = {
   AppRoutes.splash,
   AppRoutes.onboarding,
   AppRoutes.login,
+  AppRoutes.verifyEmail,
   AppRoutes.setupProfile,
 };
 
@@ -141,11 +155,17 @@ void _capturePendingLocation(Ref ref, String location) {
 ///    bounces to whatever [defaultDestinationFor] says. New protected
 ///    routes are safe by default: they're blocked unless added to
 ///    `publicLocations`, not the other way around.
-/// 4. Authenticated but onboarding isn't complete — only setup-profile is
-///    reachable.
+/// 4. Authenticated but onboarding isn't complete — setup-profile is
+///    reachable, and so is verify-email (registration routes there first;
+///    see `LoginScreen._continue`), since checking email shouldn't require
+///    onboarding to be done first.
 /// 5. Fully authenticated and onboarded — auth-only screens (splash is
-///    handled above, onboarding/login/setup-profile here) redirect home;
-///    everything else is allowed.
+///    handled above, onboarding/login/verify-email/setup-profile here)
+///    redirect home; everything else is allowed. Verification isn't a
+///    permanent gate: nothing on the client currently tracks whether the
+///    email was ever confirmed, so once onboarding is done this screen is
+///    just another auth-flow screen to redirect away from, not something
+///    to keep nagging about.
 String? _redirect(Ref ref, String location) {
   final auth = ref.read(authControllerProvider);
 
@@ -156,7 +176,18 @@ String? _redirect(Ref ref, String location) {
 
   if (location == AppRoutes.splash) return null;
 
-  const publicLocations = {AppRoutes.onboarding, AppRoutes.login};
+  // verify-email is public rather than gated behind auth: a real
+  // verification link is often opened on a different device/browser than
+  // the one that registered — possibly while fully logged out there — and
+  // the token itself is the authorization, not the session. The API side
+  // (POST /auth/verify-email) already works this way; the client was the
+  // one gap, caught by testing a fresh, unauthenticated deep link live
+  // rather than only ever visiting this screen already logged in.
+  const publicLocations = {
+    AppRoutes.onboarding,
+    AppRoutes.login,
+    AppRoutes.verifyEmail,
+  };
   if (!auth.isAuthenticated) {
     if (publicLocations.contains(location)) return null;
     _capturePendingLocation(ref, location);
@@ -165,12 +196,19 @@ String? _redirect(Ref ref, String location) {
 
   final needsOnboarding = !auth.user!.onboardingCompleted;
   if (needsOnboarding) {
-    return location == AppRoutes.setupProfile ? null : AppRoutes.setupProfile;
+    const allowedWhilePendingOnboarding = {
+      AppRoutes.setupProfile,
+      AppRoutes.verifyEmail,
+    };
+    return allowedWhilePendingOnboarding.contains(location)
+        ? null
+        : AppRoutes.setupProfile;
   }
 
   const authOnlyLocations = {
     AppRoutes.onboarding,
     AppRoutes.login,
+    AppRoutes.verifyEmail,
     AppRoutes.setupProfile,
   };
   return authOnlyLocations.contains(location) ? AppRoutes.home : null;

@@ -121,6 +121,35 @@ class AuthRepository {
 
   Future<void> logout() => _api.logout();
 
+  /// Consumes a one-time verification token — see
+  /// server/internal/modules/auth/verification.go. Throws [ApiException]
+  /// with a generic message for a token that's missing, already used, or
+  /// expired; the server deliberately doesn't distinguish which.
+  Future<void> verifyEmail(String token) async {
+    try {
+      await _api.dio.post<void>('/auth/verify-email', data: {'token': token});
+    } catch (error) {
+      throw ApiException.from(error);
+    }
+  }
+
+  /// Requests a fresh verification token by email. Always succeeds from
+  /// the caller's point of view — the backend returns the same generic
+  /// message whether or not the account exists, to avoid revealing account
+  /// existence (brief §13).
+  Future<String> resendVerification(String email) async {
+    try {
+      final response = await _api.dio.post<Map<String, dynamic>>(
+        '/auth/resend-verification',
+        data: {'email': email},
+      );
+      final data = _data(response);
+      return data['message']?.toString() ?? '';
+    } catch (error) {
+      throw ApiException.from(error);
+    }
+  }
+
   static Map<String, dynamic> _data(Response<Map<String, dynamic>> response) {
     return _map(response.data?['data']);
   }
