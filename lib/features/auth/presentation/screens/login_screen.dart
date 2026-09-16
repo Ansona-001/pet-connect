@@ -205,6 +205,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                         color: AppColors.textSecondary,
                                       ),
                                     ),
+                                    if (!_createAccount) ...[
+                                      const SizedBox(height: AppSpacing.sm),
+                                      Align(
+                                        alignment: Alignment.centerRight,
+                                        child: TextButton(
+                                          onPressed: () => context.go(
+                                            '${AppRoutes.forgotPassword}?email=${Uri.encodeQueryComponent(_emailController.text.trim())}',
+                                          ),
+                                          child: const Text('Forgot password?'),
+                                        ),
+                                      ),
+                                    ],
                                     if (authState.error != null) ...[
                                       const SizedBox(height: AppSpacing.md),
                                       Text(

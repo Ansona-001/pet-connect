@@ -150,6 +150,40 @@ class AuthRepository {
     }
   }
 
+  /// Requests a password reset link by email. Same enumeration-safe
+  /// contract as [resendVerification] — always returns a generic message
+  /// regardless of whether the account exists (brief §13).
+  Future<String> forgotPassword(String email) async {
+    try {
+      final response = await _api.dio.post<Map<String, dynamic>>(
+        '/auth/forgot-password',
+        data: {'email': email},
+      );
+      final data = _data(response);
+      return data['message']?.toString() ?? '';
+    } catch (error) {
+      throw ApiException.from(error);
+    }
+  }
+
+  /// Consumes a one-time reset token and sets a new password — see
+  /// server/internal/modules/auth/password_reset.go. Success revokes every
+  /// existing session server-side, so the caller lands back on the login
+  /// screen rather than being kept signed in.
+  Future<void> resetPassword({
+    required String token,
+    required String password,
+  }) async {
+    try {
+      await _api.dio.post<void>(
+        '/auth/reset-password',
+        data: {'token': token, 'password': password},
+      );
+    } catch (error) {
+      throw ApiException.from(error);
+    }
+  }
+
   static Map<String, dynamic> _data(Response<Map<String, dynamic>> response) {
     return _map(response.data?['data']);
   }

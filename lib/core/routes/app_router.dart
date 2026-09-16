@@ -3,7 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../features/auth/application/auth_controller.dart';
+import '../../features/auth/presentation/screens/forgot_password_screen.dart';
 import '../../features/auth/presentation/screens/login_screen.dart';
+import '../../features/auth/presentation/screens/reset_password_screen.dart';
 import '../../features/auth/presentation/screens/verify_email_screen.dart';
 import '../../features/onboarding/presentation/screens/onboarding_screen.dart';
 import '../../features/onboarding/presentation/screens/profile_setup_screen.dart';
@@ -61,6 +63,29 @@ final goRouterProvider = Provider<GoRouter>((ref) {
         },
       ),
       GoRoute(
+        path: AppRoutes.forgotPassword,
+        pageBuilder: (context, state) {
+          return _slideFadePage(
+            state: state,
+            child: ForgotPasswordScreen(
+              initialEmail: state.uri.queryParameters['email'],
+            ),
+          );
+        },
+      ),
+      GoRoute(
+        path: AppRoutes.resetPassword,
+        pageBuilder: (context, state) {
+          return _slideFadePage(
+            state: state,
+            child: ResetPasswordScreen(
+              email: state.uri.queryParameters['email'],
+              token: state.uri.queryParameters['token'],
+            ),
+          );
+        },
+      ),
+      GoRoute(
         path: AppRoutes.setupProfile,
         pageBuilder: (context, state) {
           return _slideFadePage(
@@ -110,6 +135,8 @@ const _authFlowLocations = {
   AppRoutes.onboarding,
   AppRoutes.login,
   AppRoutes.verifyEmail,
+  AppRoutes.forgotPassword,
+  AppRoutes.resetPassword,
   AppRoutes.setupProfile,
 };
 
@@ -176,17 +203,20 @@ String? _redirect(Ref ref, String location) {
 
   if (location == AppRoutes.splash) return null;
 
-  // verify-email is public rather than gated behind auth: a real
-  // verification link is often opened on a different device/browser than
-  // the one that registered — possibly while fully logged out there — and
-  // the token itself is the authorization, not the session. The API side
-  // (POST /auth/verify-email) already works this way; the client was the
-  // one gap, caught by testing a fresh, unauthenticated deep link live
-  // rather than only ever visiting this screen already logged in.
+  // verify-email, forgot-password, and reset-password are all public
+  // rather than gated behind auth: a real verification/reset link is often
+  // opened on a different device/browser than the one that registered or
+  // requested it — possibly while fully logged out there — and the token
+  // itself is the authorization, not the session. The API side already
+  // works this way; verify-email's client gap (this screen used to require
+  // being authenticated) was caught by testing a fresh, unauthenticated
+  // deep link live rather than only ever visiting it already logged in.
   const publicLocations = {
     AppRoutes.onboarding,
     AppRoutes.login,
     AppRoutes.verifyEmail,
+    AppRoutes.forgotPassword,
+    AppRoutes.resetPassword,
   };
   if (!auth.isAuthenticated) {
     if (publicLocations.contains(location)) return null;
@@ -209,6 +239,8 @@ String? _redirect(Ref ref, String location) {
     AppRoutes.onboarding,
     AppRoutes.login,
     AppRoutes.verifyEmail,
+    AppRoutes.forgotPassword,
+    AppRoutes.resetPassword,
     AppRoutes.setupProfile,
   };
   return authOnlyLocations.contains(location) ? AppRoutes.home : null;
