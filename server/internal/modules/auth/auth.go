@@ -57,6 +57,8 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	auth.Post("/logout", h.logout)
 	auth.Post("/verify-email", h.verifyEmail)
 	auth.Post("/resend-verification", h.resendVerification)
+	auth.Post("/forgot-password", h.forgotPassword)
+	auth.Post("/reset-password", h.resetPassword)
 }
 
 type registerRequest struct {

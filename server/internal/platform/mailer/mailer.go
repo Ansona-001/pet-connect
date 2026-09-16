@@ -12,6 +12,7 @@ import "log/slog"
 // implementation until a provider is configured.
 type Sender interface {
 	SendVerificationEmail(to, token string) error
+	SendPasswordReset(to, token string) error
 }
 
 // LogSender never claims to have delivered anything to a real inbox — it
@@ -21,5 +22,10 @@ type LogSender struct{}
 
 func (LogSender) SendVerificationEmail(to, token string) error {
 	slog.Info("email verification token (no email provider configured)", "to", to, "token", token)
+	return nil
+}
+
+func (LogSender) SendPasswordReset(to, token string) error {
+	slog.Info("password reset token (no email provider configured)", "to", to, "token", token)
 	return nil
 }
