@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
 import '../domain/auth_user.dart';
+import '../domain/session_info.dart';
 
 final authRepositoryProvider = Provider<AuthRepository>((ref) {
   return AuthRepository(ref.watch(apiClientProvider));
@@ -120,6 +121,40 @@ class AuthRepository {
   }
 
   Future<void> logout() => _api.logout();
+
+  /// Ends every session for this account, not just the current device —
+  /// see server/internal/modules/auth/sessions.go's logout-all. Never
+  /// throws (mirrors [logout]'s best-effort contract): local credentials
+  /// are cleared even if the request itself fails.
+  Future<void> logoutAll() => _api.logoutAll();
+
+  /// Lists this account's currently active sessions/devices (brief
+  /// Milestone 1: "session/device list"). Ordered by most recently used.
+  Future<List<SessionInfo>> listSessions() async {
+    try {
+      final response = await _api.dio.get<Map<String, dynamic>>('/sessions');
+      final data = response.data?['data'];
+      if (data is! List) return const [];
+      return data
+          .whereType<Map>()
+          .map(
+            (entry) => SessionInfo.fromJson(Map<String, dynamic>.from(entry)),
+          )
+          .toList();
+    } catch (error) {
+      throw ApiException.from(error);
+    }
+  }
+
+  /// Ends one session by id — the server enforces that it belongs to the
+  /// caller (BOLA-safe), so this can't be used to sign another account out.
+  Future<void> revokeSession(String sessionId) async {
+    try {
+      await _api.dio.delete<void>('/sessions/$sessionId');
+    } catch (error) {
+      throw ApiException.from(error);
+    }
+  }
 
   /// Consumes a one-time verification token — see
   /// server/internal/modules/auth/verification.go. Throws [ApiException]

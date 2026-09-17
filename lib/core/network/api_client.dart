@@ -150,6 +150,21 @@ class ApiClient {
     await tokens.clear();
   }
 
+  /// Unlike [logout], this hits a protected endpoint authorized by the
+  /// current access token, not a refresh token in the body — the server
+  /// revokes every session for the user (server/internal/modules/auth/
+  /// sessions.go) and, unlike a single-session logout, also invalidates
+  /// already-issued access tokens near-immediately (ADR 0004). Local
+  /// credentials are cleared either way, matching [logout]'s behavior.
+  Future<void> logoutAll() async {
+    try {
+      await dio.post<void>('/auth/logout-all');
+    } catch (_) {
+      // Local credentials are still cleared when the server is unavailable.
+    }
+    await tokens.clear();
+  }
+
   static Map<String, dynamic> _unwrap(Map<String, dynamic>? body) {
     final data = body?['data'];
     if (data is Map<String, dynamic>) return data;

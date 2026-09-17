@@ -10,6 +10,7 @@ class AppRoutes {
   static const String setupProfile = '/setup-profile';
   static const String home = '/home';
   static const String inbox = '/inbox';
+  static const String sessions = '/sessions';
   static const String chatPath = '/chat/:chatId';
 
   static String chat(String chatId) => '/chat/$chatId';

@@ -6,6 +6,7 @@ import '../../features/auth/application/auth_controller.dart';
 import '../../features/auth/presentation/screens/forgot_password_screen.dart';
 import '../../features/auth/presentation/screens/login_screen.dart';
 import '../../features/auth/presentation/screens/reset_password_screen.dart';
+import '../../features/auth/presentation/screens/sessions_screen.dart';
 import '../../features/auth/presentation/screens/verify_email_screen.dart';
 import '../../features/onboarding/presentation/screens/onboarding_screen.dart';
 import '../../features/onboarding/presentation/screens/profile_setup_screen.dart';
@@ -104,6 +105,12 @@ final goRouterProvider = Provider<GoRouter>((ref) {
         path: AppRoutes.inbox,
         pageBuilder: (context, state) {
           return _slideFadePage(state: state, child: const InboxScreen());
+        },
+      ),
+      GoRoute(
+        path: AppRoutes.sessions,
+        pageBuilder: (context, state) {
+          return _slideFadePage(state: state, child: const SessionsScreen());
         },
       ),
       GoRoute(

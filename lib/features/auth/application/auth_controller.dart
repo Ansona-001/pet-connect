@@ -136,6 +136,11 @@ class AuthController extends StateNotifier<AuthState> {
     state = const AuthState(initialized: true);
   }
 
+  Future<void> logoutAll() async {
+    await _repository.logoutAll();
+    state = const AuthState(initialized: true);
+  }
+
   /// Reacts to [sessionExpiredEventsProvider]. Guarded on
   /// [AuthState.isAuthenticated] so this can never race with — or override
   /// the result of — a cold-start [restore] that never had a user to begin

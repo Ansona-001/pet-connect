@@ -67,20 +67,37 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   }
 
   Future<void> _showSettings() async {
-    final signOut = await showModalBottomSheet<bool>(
+    final action = await showModalBottomSheet<String>(
       context: context,
       showDragHandle: true,
       builder: (sheetContext) => SafeArea(
         top: false,
-        child: ListTile(
-          leading: const Icon(Icons.logout_rounded, color: AppColors.error),
-          title: const Text('Sign out'),
-          subtitle: const Text('Remove this session from this device.'),
-          onTap: () => Navigator.of(sheetContext).pop(true),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.devices_rounded),
+              title: const Text('Manage sessions'),
+              subtitle: const Text('See and sign out other signed-in devices.'),
+              onTap: () => Navigator.of(sheetContext).pop('sessions'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.logout_rounded, color: AppColors.error),
+              title: const Text('Sign out'),
+              subtitle: const Text('Remove this session from this device.'),
+              onTap: () => Navigator.of(sheetContext).pop('sign_out'),
+            ),
+          ],
         ),
       ),
     );
-    if (signOut != true) return;
+    if (!mounted || action == null) return;
+
+    if (action == 'sessions') {
+      context.push(AppRoutes.sessions);
+      return;
+    }
+
     await ref.read(authControllerProvider.notifier).logout();
     ref.invalidate(socialControllerProvider);
     if (mounted) context.go(AppRoutes.login);
