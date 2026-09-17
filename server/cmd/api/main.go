@@ -143,11 +143,12 @@ func run() error {
 	app.Static("/media/demo", cfg.DemoAssetDir, fiber.Static{MaxAge: 86400})
 
 	v1 := app.Group("/v1")
-	auth.RegisterRoutes(v1, db, tokens, cfg.RefreshTokenTTL, mailer.LogSender{})
+	authHandler := auth.RegisterRoutes(v1, db, tokens, cfg.RefreshTokenTTL, mailer.LogSender{}, redisClient)
 	// The socket route authenticates with a single-use ticket, so mount it
 	// before the bearer middleware that protects the rest of /v1.
 	realtimeServer.RegisterSocketRoute(v1)
-	protected := v1.Group("", httpx.Authenticate(tokens))
+	protected := v1.Group("", httpx.Authenticate(tokens, redisClient))
+	authHandler.RegisterProtectedRoutes(protected)
 	account.RegisterRoutes(protected, db)
 	pets.RegisterRoutes(protected, db)
 	social.RegisterRoutes(protected, db)

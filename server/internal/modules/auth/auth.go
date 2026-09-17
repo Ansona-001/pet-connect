@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 
 	"petconnect/server/internal/platform/authjwt"
 	"petconnect/server/internal/platform/httpx"
@@ -36,16 +37,19 @@ type Handler struct {
 	refreshTTL time.Duration
 	clock      func() time.Time
 	mailer     mailer.Sender
+	redis      *redis.Client
 }
 
 // New constructs the authentication module.
-func New(db *pgxpool.Pool, tokens *authjwt.Manager, refreshTTL time.Duration, sender mailer.Sender) *Handler {
-	return &Handler{db: db, tokens: tokens, refreshTTL: refreshTTL, clock: time.Now, mailer: sender}
+func New(db *pgxpool.Pool, tokens *authjwt.Manager, refreshTTL time.Duration, sender mailer.Sender, redisClient *redis.Client) *Handler {
+	return &Handler{db: db, tokens: tokens, refreshTTL: refreshTTL, clock: time.Now, mailer: sender, redis: redisClient}
 }
 
 // RegisterRoutes mounts public authentication routes on a router rooted at /v1.
-func RegisterRoutes(router fiber.Router, db *pgxpool.Pool, tokens *authjwt.Manager, refreshTTL time.Duration, sender mailer.Sender) {
-	New(db, tokens, refreshTTL, sender).RegisterRoutes(router)
+func RegisterRoutes(router fiber.Router, db *pgxpool.Pool, tokens *authjwt.Manager, refreshTTL time.Duration, sender mailer.Sender, redisClient *redis.Client) *Handler {
+	handler := New(db, tokens, refreshTTL, sender, redisClient)
+	handler.RegisterRoutes(router)
+	return handler
 }
 
 // RegisterRoutes mounts this handler's public routes.
@@ -143,7 +147,7 @@ func (h *Handler) register(c *fiber.Ctx) error {
 		return internalProblem(c)
 	}
 
-	result, err := h.createSession(c.UserContext(), tx, user.ID, &user)
+	result, err := h.createSession(c.UserContext(), tx, user.ID, &user, c.Get(fiber.HeaderUserAgent))
 	if err != nil {
 		return internalProblem(c)
 	}
@@ -192,7 +196,7 @@ func (h *Handler) login(c *fiber.Ctx) error {
 		return internalProblem(c)
 	}
 
-	result, err := h.createSession(c.UserContext(), tx, user.ID, &user)
+	result, err := h.createSession(c.UserContext(), tx, user.ID, &user, c.Get(fiber.HeaderUserAgent))
 	if err != nil {
 		return internalProblem(c)
 	}
@@ -240,20 +244,30 @@ func (h *Handler) logout(c *fiber.Ctx) error {
 		return validationProblem(c, "refresh_token", "Refresh token is required.")
 	}
 
-	_, err := h.db.Exec(c.UserContext(), `
-		UPDATE refresh_tokens
-		SET revoked_at = COALESCE(revoked_at, now())
-		WHERE family_id = (
-			SELECT family_id FROM refresh_tokens WHERE token_hash = $1
-		)`, authjwt.HashOpaqueToken(input.RefreshToken))
-	if err != nil {
+	familyID := uuid.Nil
+	if err := h.db.QueryRow(c.UserContext(), `
+		SELECT family_id FROM refresh_tokens WHERE token_hash = $1`,
+		authjwt.HashOpaqueToken(input.RefreshToken)).Scan(&familyID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return internalProblem(c)
+	}
+
+	if _, err := h.db.Exec(c.UserContext(), `
+		UPDATE refresh_tokens SET revoked_at = COALESCE(revoked_at, now())
+		WHERE family_id = $1`, familyID); err != nil {
+		return internalProblem(c)
+	}
+	// Keeps the sessions list (GET /v1/sessions) honest — without this, a
+	// session ended via plain logout would still show up there as active.
+	if _, err := h.db.Exec(c.UserContext(), `
+		UPDATE sessions SET revoked_at = COALESCE(revoked_at, now())
+		WHERE family_id = $1`, familyID); err != nil {
 		return internalProblem(c)
 	}
 	c.Set(fiber.HeaderCacheControl, "no-store")
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
-func (h *Handler) createSession(ctx context.Context, tx pgx.Tx, userID uuid.UUID, user *userResponse) (tokenResponse, error) {
+func (h *Handler) createSession(ctx context.Context, tx pgx.Tx, userID uuid.UUID, user *userResponse, userAgent string) (tokenResponse, error) {
 	plain, hash, err := authjwt.NewOpaqueToken()
 	if err != nil {
 		return tokenResponse{}, err
@@ -269,6 +283,25 @@ func (h *Handler) createSession(ctx context.Context, tx pgx.Tx, userID uuid.UUID
 		return tokenResponse{}, err
 	}
 
+	// A device row per sign-in, not deduplicated against prior ones: there's
+	// no client-supplied device identifier to correlate "same device, new
+	// login" against, so each login/register is its own row in the session
+	// list. Good enough to let a user recognize and revoke a stray sign-in;
+	// real device fingerprinting would be its own feature.
+	deviceName, platform := deviceLabelFromUserAgent(userAgent)
+	var deviceID uuid.UUID
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO devices (user_id, name, platform)
+		VALUES ($1, $2, $3)
+		RETURNING id`, userID, deviceName, platform).Scan(&deviceID); err != nil {
+		return tokenResponse{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO sessions (user_id, device_id, family_id)
+		VALUES ($1, $2, $3)`, userID, deviceID, familyID); err != nil {
+		return tokenResponse{}, err
+	}
+
 	access, expiresAt, err := h.tokens.Issue(userID, recordID)
 	if err != nil {
 		return tokenResponse{}, err
@@ -277,6 +310,38 @@ func (h *Handler) createSession(ctx context.Context, tx pgx.Tx, userID uuid.UUID
 		AccessToken: access, RefreshToken: plain, TokenType: "Bearer",
 		ExpiresAt: expiresAt, User: user,
 	}, nil
+}
+
+// deviceLabelFromUserAgent makes a best-effort, dependency-free guess at a
+// human-readable device name and a coarse platform from the User-Agent
+// header. It's deliberately simple substring matching, not a full UA
+// parser — good enough for a session list ("Windows", "iOS"), not intended
+// for anything security-sensitive.
+func deviceLabelFromUserAgent(userAgent string) (name, platform string) {
+	userAgent = strings.TrimSpace(userAgent)
+	if userAgent == "" {
+		return "Unknown device", ""
+	}
+	name = userAgent
+	if len(name) > 120 {
+		name = name[:120]
+	}
+	lower := strings.ToLower(userAgent)
+	switch {
+	case strings.Contains(lower, "android"):
+		platform = "android"
+	case strings.Contains(lower, "iphone"), strings.Contains(lower, "ipad"):
+		platform = "ios"
+	case strings.Contains(lower, "windows"):
+		platform = "windows"
+	case strings.Contains(lower, "mac os"), strings.Contains(lower, "macintosh"):
+		platform = "macos"
+	case strings.Contains(lower, "linux"):
+		platform = "linux"
+	default:
+		platform = "web"
+	}
+	return name, platform
 }
 
 func (h *Handler) rotate(ctx context.Context, plain string) (tokenResponse, error) {
@@ -306,6 +371,11 @@ func (h *Handler) rotate(ctx context.Context, plain string) (tokenResponse, erro
 	if current.UsedAt != nil || current.RevokedAt != nil {
 		if _, err := tx.Exec(ctx, `
 			UPDATE refresh_tokens SET revoked_at = COALESCE(revoked_at, now())
+			WHERE family_id = $1`, current.FamilyID); err != nil {
+			return tokenResponse{}, err
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE sessions SET revoked_at = COALESCE(revoked_at, now())
 			WHERE family_id = $1`, current.FamilyID); err != nil {
 			return tokenResponse{}, err
 		}
@@ -346,6 +416,10 @@ func (h *Handler) rotate(ctx context.Context, plain string) (tokenResponse, erro
 		if err == nil {
 			err = errRefreshReused
 		}
+		return tokenResponse{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE sessions SET last_used_at = $2 WHERE family_id = $1`, current.FamilyID, now); err != nil {
 		return tokenResponse{}, err
 	}
 
