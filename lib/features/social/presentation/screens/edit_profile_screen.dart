@@ -71,7 +71,8 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
     }
     setState(() {
       _saving = false;
-      _error = ref.read(authControllerProvider).error ??
+      _error =
+          ref.read(authControllerProvider).error ??
           'The profile could not be saved.';
     });
   }

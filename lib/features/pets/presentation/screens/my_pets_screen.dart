@@ -110,7 +110,9 @@ class _MyPetsScreenState extends ConsumerState<MyPetsScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
-        ..showSnackBar(SnackBar(content: Text(ApiException.from(error).message)));
+        ..showSnackBar(
+          SnackBar(content: Text(ApiException.from(error).message)),
+        );
     } finally {
       if (mounted) setState(() => _deletingId = null);
     }
@@ -288,7 +290,10 @@ class _PetTile extends StatelessWidget {
                     fit: BoxFit.cover,
                     errorBuilder: (_, _, _) => const ColoredBox(
                       color: AppColors.elevatedSurface,
-                      child: Icon(Icons.pets_rounded, color: AppColors.textDisabled),
+                      child: Icon(
+                        Icons.pets_rounded,
+                        color: AppColors.textDisabled,
+                      ),
                     ),
                   ),
                 ),
@@ -366,10 +371,7 @@ class _PetTile extends StatelessWidget {
                         value: 'activate',
                         child: Text('Set as active'),
                       ),
-                    const PopupMenuItem(
-                      value: 'delete',
-                      child: Text('Remove'),
-                    ),
+                    const PopupMenuItem(value: 'delete', child: Text('Remove')),
                   ],
                 ),
             ],

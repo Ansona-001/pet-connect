@@ -25,25 +25,22 @@ import 'routes.dart';
 /// gating only happened inside individual screens' own navigation calls.
 final goRouterProvider = Provider<GoRouter>((ref) {
   final refreshNotifier = _RouterRefreshNotifier();
-  ref.listen<AuthState>(
-    authControllerProvider,
-    (previous, next) {
-      // Only re-run `_redirect` when something it actually reads has
-      // changed. Notifying on every AuthState change (e.g. a profile edit
-      // updating unrelated fields like bio/city) makes GoRouter reprocess
-      // its current route via `redirect`, and doing that while sitting on
-      // a `push()`-ed route (not top-level navigation) was found to
-      // duplicate that route's page — a second instance mounts right as
-      // the first is popped, so e.g. EditProfileScreen's own `pop()` after
-      // a successful save appeared to silently do nothing. Caught by
-      // instrumenting the widget's instance-level lifecycle live, not by
-      // code review — the duplicate page's `initState` fired between the
-      // original's `pop()` call and its `dispose()`.
-      if (previous == null || _affectsRedirect(previous, next)) {
-        refreshNotifier.notify();
-      }
-    },
-  );
+  ref.listen<AuthState>(authControllerProvider, (previous, next) {
+    // Only re-run `_redirect` when something it actually reads has
+    // changed. Notifying on every AuthState change (e.g. a profile edit
+    // updating unrelated fields like bio/city) makes GoRouter reprocess
+    // its current route via `redirect`, and doing that while sitting on
+    // a `push()`-ed route (not top-level navigation) was found to
+    // duplicate that route's page — a second instance mounts right as
+    // the first is popped, so e.g. EditProfileScreen's own `pop()` after
+    // a successful save appeared to silently do nothing. Caught by
+    // instrumenting the widget's instance-level lifecycle live, not by
+    // code review — the duplicate page's `initState` fired between the
+    // original's `pop()` call and its `dispose()`.
+    if (previous == null || _affectsRedirect(previous, next)) {
+      refreshNotifier.notify();
+    }
+  });
   ref.onDispose(refreshNotifier.dispose);
 
   return GoRouter(
@@ -134,10 +131,7 @@ final goRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.editProfile,
         pageBuilder: (context, state) {
-          return _slideFadePage(
-            state: state,
-            child: const EditProfileScreen(),
-          );
+          return _slideFadePage(state: state, child: const EditProfileScreen());
         },
       ),
       GoRoute(

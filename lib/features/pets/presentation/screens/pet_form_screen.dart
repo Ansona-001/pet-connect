@@ -98,8 +98,12 @@ class _PetFormScreenState extends ConsumerState<PetFormScreen> {
         _ageLabelController.text = pet.ageLabel;
         _weightController.text = pet.weightKg?.toString() ?? '';
         _bioController.text = pet.bio;
-        _petType = petTypes.contains(pet.petType) ? pet.petType : petTypes.first;
-        _gender = petGenders.contains(pet.gender) ? pet.gender : petGenders.last;
+        _petType = petTypes.contains(pet.petType)
+            ? pet.petType
+            : petTypes.first;
+        _gender = petGenders.contains(pet.gender)
+            ? pet.gender
+            : petGenders.last;
         _personality
           ..clear()
           ..addAll(pet.personality);
@@ -118,7 +122,8 @@ class _PetFormScreenState extends ConsumerState<PetFormScreen> {
     }
   }
 
-  bool get _canSave => _nameController.text.trim().isNotEmpty && !_uploadingPhoto;
+  bool get _canSave =>
+      _nameController.text.trim().isNotEmpty && !_uploadingPhoto;
 
   Future<void> _pickPhoto() async {
     final image = await ImagePicker().pickImage(
@@ -243,15 +248,17 @@ class _PetFormScreenState extends ConsumerState<PetFormScreen> {
                         ],
                       ),
                       const SizedBox(height: AppSpacing.xl),
-                      Center(child: _PhotoPicker(
-                        imageUrl: _primaryImageUrl.isEmpty
-                            ? ''
-                            : ref
-                                .read(petsRepositoryProvider)
-                                .resolveMediaUrl(_primaryImageUrl),
-                        uploading: _uploadingPhoto,
-                        onTap: _uploadingPhoto ? null : _pickPhoto,
-                      )),
+                      Center(
+                        child: _PhotoPicker(
+                          imageUrl: _primaryImageUrl.isEmpty
+                              ? ''
+                              : ref
+                                    .read(petsRepositoryProvider)
+                                    .resolveMediaUrl(_primaryImageUrl),
+                          uploading: _uploadingPhoto,
+                          onTap: _uploadingPhoto ? null : _pickPhoto,
+                        ),
+                      ),
                       const SizedBox(height: AppSpacing.xl),
                       AppTextField(
                         controller: _nameController,
@@ -475,9 +482,7 @@ class _SelectableChip extends StatelessWidget {
       labelStyle: AppTextStyles.labelSmall.copyWith(
         color: selected ? AppColors.primary : AppColors.textSecondary,
       ),
-      side: BorderSide(
-        color: selected ? AppColors.primary : AppColors.border,
-      ),
+      side: BorderSide(color: selected ? AppColors.primary : AppColors.border),
     );
   }
 }
