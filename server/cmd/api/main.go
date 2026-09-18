@@ -149,7 +149,7 @@ func run() error {
 	realtimeServer.RegisterSocketRoute(v1)
 	protected := v1.Group("", httpx.Authenticate(tokens, redisClient))
 	authHandler.RegisterProtectedRoutes(protected)
-	account.RegisterRoutes(protected, db)
+	account.RegisterRoutes(protected, db, redisClient)
 	pets.RegisterRoutes(protected, db)
 	social.RegisterRoutes(protected, db)
 	discovery.RegisterRoutes(protected, db)

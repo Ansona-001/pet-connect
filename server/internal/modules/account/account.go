@@ -10,29 +10,36 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 
 	"petconnect/server/internal/platform/httpx"
 )
 
 // Handler owns the authenticated owner's profile.
 type Handler struct {
-	db *pgxpool.Pool
+	db    *pgxpool.Pool
+	redis *redis.Client
 }
 
-// New constructs the account module.
-func New(db *pgxpool.Pool) *Handler {
-	return &Handler{db: db}
+// New constructs the account module. redisClient is used only by account
+// deletion, to invalidate already-issued access tokens near-immediately —
+// the same mechanism logout-all uses (ADR 0004) — since deleting an
+// account is at least as security-sensitive as signing out everywhere.
+func New(db *pgxpool.Pool, redisClient *redis.Client) *Handler {
+	return &Handler{db: db, redis: redisClient}
 }
 
 // RegisterRoutes mounts authenticated account routes on a router rooted at /v1.
-func RegisterRoutes(router fiber.Router, db *pgxpool.Pool) {
-	New(db).RegisterRoutes(router)
+func RegisterRoutes(router fiber.Router, db *pgxpool.Pool, redisClient *redis.Client) {
+	New(db, redisClient).RegisterRoutes(router)
 }
 
 // RegisterRoutes mounts routes. The supplied router must already use authentication middleware.
 func (h *Handler) RegisterRoutes(router fiber.Router) {
 	router.Get("/me", h.getMe)
 	router.Patch("/me", h.patchMe)
+	router.Delete("/me/account", h.deleteAccount)
+	router.Get("/me/export", h.exportData)
 }
 
 type location struct {
