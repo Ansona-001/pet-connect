@@ -107,6 +107,18 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   Widget build(BuildContext context) {
     final socialState = ref.watch(socialControllerProvider);
     final setup = socialState.userProfile;
+    // SocialState.userProfile.ownerName/city are a one-time snapshot taken
+    // when SocialController was constructed (see socialControllerProvider)
+    // and never refreshed afterward. AuthUser is the source of truth kept
+    // live by EditProfileScreen, so it takes priority here — falling back
+    // to the snapshot only if, for some reason, there's no signed-in user.
+    final authUser = ref.watch(authControllerProvider).user;
+    final ownerName = authUser?.name.isNotEmpty == true
+        ? authUser!.name
+        : setup.ownerName;
+    final city = authUser?.city.isNotEmpty == true
+        ? authUser!.city
+        : setup.city;
     final selectedPet = socialState.pets.isEmpty
         ? null
         : socialState.pets[socialState.activePetIndex < socialState.pets.length
@@ -153,17 +165,16 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       onSettingsTap: _showSettings,
                     ),
                     const SizedBox(height: AppSpacing.lg),
-                    _ProfileHero(city: setup.city, imageAsset: imageAsset),
+                    _ProfileHero(city: city, imageAsset: imageAsset),
                     const SizedBox(height: AppSpacing.lg),
                     _PetIdentity(
                       petName: petName,
                       petType: petType,
-                      ownerName: setup.ownerName,
+                      ownerName: ownerName,
                     ),
                     const SizedBox(height: AppSpacing.lg),
                     _ProfileButtons(
-                      onEdit: () =>
-                          _showFeedback('Profile editor will open here.'),
+                      onEdit: () => context.push(AppRoutes.editProfile),
                       onShare: () => _shareProfile(petName),
                     ),
                     const SizedBox(height: AppSpacing.xxl),
@@ -172,9 +183,10 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                     _AboutSection(petName: petName, interests: setup.interests),
                     const SizedBox(height: AppSpacing.xxl),
                     _OwnerCard(
-                      ownerName: setup.ownerName,
+                      ownerName: ownerName,
                       petName: petName,
                       petType: petType,
+                      onTap: () => context.push(AppRoutes.pets),
                     ),
                     const SizedBox(height: AppSpacing.xxl),
                     _PremiumBanner(
@@ -599,59 +611,68 @@ class _OwnerCard extends StatelessWidget {
     required this.ownerName,
     required this.petName,
     required this.petType,
+    required this.onTap,
   });
 
   final String ownerName;
   final String petName;
   final String petType;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(AppSpacing.lg),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
+    return Material(
+      color: AppColors.transparent,
+      child: InkWell(
+        onTap: onTap,
         borderRadius: AppRadius.lg,
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: AppSpacing.massive,
-            height: AppSpacing.massive,
-            decoration: BoxDecoration(
-              color: AppColors.primary.withValues(alpha: 0.16),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.person_rounded,
-              color: AppColors.primaryLight,
-            ),
+        child: Ink(
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: AppRadius.lg,
+            border: Border.all(color: AppColors.border),
           ),
-          const SizedBox(width: AppSpacing.md),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '$ownerName’s pet family',
-                  style: AppTextStyles.labelLarge,
+          child: Row(
+            children: [
+              Container(
+                width: AppSpacing.massive,
+                height: AppSpacing.massive,
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.16),
+                  shape: BoxShape.circle,
                 ),
-                const SizedBox(height: AppSpacing.xs),
-                Text(
-                  '$petName • $petType',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppTextStyles.bodySmall,
+                child: const Icon(
+                  Icons.person_rounded,
+                  color: AppColors.primaryLight,
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(width: AppSpacing.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '$ownerName’s pet family',
+                      style: AppTextStyles.labelLarge,
+                    ),
+                    const SizedBox(height: AppSpacing.xs),
+                    Text(
+                      '$petName • $petType • manage pets',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTextStyles.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: AppColors.textSecondary,
+              ),
+            ],
           ),
-          const Icon(
-            Icons.chevron_right_rounded,
-            color: AppColors.textSecondary,
-          ),
-        ],
+        ),
       ),
     );
   }

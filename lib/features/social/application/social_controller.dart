@@ -307,6 +307,24 @@ class SocialController extends StateNotifier<SocialState> {
     );
   }
 
+  /// Re-syncs [SocialState.pets] after the "My Pets" management screens
+  /// add/edit/delete a pet — see [SocialRepository.fetchMyPets]. Clamps
+  /// [SocialState.activePetIndex] if the previously active pet no longer
+  /// exists at that position (e.g. it was just deleted).
+  Future<void> refreshPets() async {
+    final repository = _repository;
+    if (repository == null) return;
+    try {
+      final pets = await repository.fetchMyPets();
+      final clampedIndex = pets.isEmpty
+          ? 0
+          : state.activePetIndex.clamp(0, pets.length - 1);
+      state = state.copyWith(pets: pets, activePetIndex: clampedIndex);
+    } catch (error) {
+      state = state.copyWith(error: ApiException.from(error).message);
+    }
+  }
+
   void selectActivePet(int index) {
     final upperBound = state.pets.isEmpty ? 1 : state.pets.length - 1;
     if (index < 0 || index > upperBound || index == state.activePetIndex) {

@@ -55,6 +55,7 @@ type user struct {
 	City                  string     `json:"city"`
 	ProfilePhotoURL       string     `json:"profile_photo_url"`
 	Location              *location  `json:"location,omitempty"`
+	IsPrivate             bool       `json:"is_private"`
 	OnboardingCompleted   bool       `json:"onboarding_completed"`
 	OnboardingCompletedAt *time.Time `json:"onboarding_completed_at,omitempty"`
 	CreatedAt             time.Time  `json:"created_at"`
@@ -68,6 +69,7 @@ type patchRequest struct {
 	ProfilePhotoURL    *string   `json:"profile_photo_url"`
 	Location           *location `json:"location"`
 	ClearLocation      bool      `json:"clear_location"`
+	IsPrivate          *bool     `json:"is_private"`
 	CompleteOnboarding bool      `json:"complete_onboarding"`
 }
 
@@ -128,14 +130,16 @@ func (h *Handler) patchMe(c *fiber.Ctx) error {
 		    onboarding_completed_at = CASE
 		      WHEN $10::boolean THEN COALESCE(onboarding_completed_at, now())
 		      ELSE onboarding_completed_at
-		    END
+		    END,
+		    is_private = COALESCE($11, is_private)
 		WHERE id = $1 AND deleted_at IS NULL
 		RETURNING id, email::text, name, bio, city, profile_photo_url,
 		          ST_Y(location::geometry), ST_X(location::geometry),
 		          onboarding_completed_at IS NOT NULL, onboarding_completed_at,
-		          created_at, updated_at`,
+		          created_at, updated_at, is_private`,
 		userID, input.Name, input.Bio, input.City, input.ProfilePhotoURL,
-		setLocation, latitude, longitude, input.ClearLocation, input.CompleteOnboarding)
+		setLocation, latitude, longitude, input.ClearLocation, input.CompleteOnboarding,
+		input.IsPrivate)
 
 	result, err := scanUser(row)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -156,7 +160,7 @@ func loadUser(c *fiber.Ctx, db *pgxpool.Pool, userID uuid.UUID) (user, error) {
 		SELECT id, email::text, name, bio, city, profile_photo_url,
 		       ST_Y(location::geometry), ST_X(location::geometry),
 		       onboarding_completed_at IS NOT NULL, onboarding_completed_at,
-		       created_at, updated_at
+		       created_at, updated_at, is_private
 		FROM users
 		WHERE id = $1 AND deleted_at IS NULL`, userID))
 }
@@ -168,7 +172,7 @@ func scanUser(row rowScanner) (user, error) {
 		&result.ID, &result.Email, &result.Name, &result.Bio, &result.City,
 		&result.ProfilePhotoURL, &latitude, &longitude,
 		&result.OnboardingCompleted, &result.OnboardingCompletedAt,
-		&result.CreatedAt, &result.UpdatedAt,
+		&result.CreatedAt, &result.UpdatedAt, &result.IsPrivate,
 	)
 	if err != nil {
 		return user{}, err
@@ -189,7 +193,7 @@ func (e *fieldError) Error() string { return e.message }
 func hasPatch(input patchRequest) bool {
 	return input.Name != nil || input.Bio != nil || input.City != nil ||
 		input.ProfilePhotoURL != nil || input.Location != nil || input.ClearLocation ||
-		input.CompleteOnboarding
+		input.IsPrivate != nil || input.CompleteOnboarding
 }
 
 func normalizeAndValidate(input *patchRequest) *fieldError {

@@ -131,6 +131,34 @@ class AuthController extends StateNotifier<AuthState> {
     }
   }
 
+  /// Updates the owner's own profile and refreshes [AuthState.user] on
+  /// success so every screen reading it (profile, feed captions, etc.)
+  /// sees the change immediately without a separate refetch.
+  Future<bool> updateProfile({
+    required String name,
+    required String bio,
+    required String city,
+    required bool isPrivate,
+  }) async {
+    state = state.copyWith(isLoading: true, clearError: true);
+    try {
+      final user = await _repository.updateProfile(
+        name: name,
+        bio: bio,
+        city: city,
+        isPrivate: isPrivate,
+      );
+      state = AuthState(initialized: true, user: user);
+      return true;
+    } catch (error) {
+      state = state.copyWith(
+        isLoading: false,
+        error: ApiException.from(error).message,
+      );
+      return false;
+    }
+  }
+
   Future<void> logout() async {
     await _repository.logout();
     state = const AuthState(initialized: true);

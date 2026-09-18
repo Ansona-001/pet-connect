@@ -1,0 +1,14 @@
+-- Adds a general "private profile" preference to owner profile editing.
+-- This is deliberately the simpler, general-purpose privacy axis —
+-- whether the owner's profile and pets are visible to everyone or
+-- restricted to people they've connected with — distinct from the
+-- location-specific visibility/discovery-participation controls reserved
+-- for their own dedicated later pass (ADR 0002; the "location visibility
+-- controls" milestone day). Additive-only per ADR 0006
+-- (docs/adr/0006-migration-strategy.md).
+--
+-- Enforcing what "restricted" means across every read path (feed,
+-- discovery, public profile, etc.) is that milestone's "visibility
+-- enforcement" day, not this migration — this only adds the column and
+-- lets the owner set it.
+ALTER TABLE users ADD COLUMN is_private boolean NOT NULL DEFAULT false;

@@ -302,14 +302,14 @@ func findUserByOAuthIdentity(ctx context.Context, tx pgx.Tx, provider, providerU
 	var user userResponse
 	err := tx.QueryRow(ctx, `
 		SELECT u.id, u.email::text, u.name, u.bio, u.city, u.profile_photo_url,
-		       u.onboarding_completed_at IS NOT NULL, u.created_at, u.updated_at,
+		       u.is_private, u.onboarding_completed_at IS NOT NULL, u.created_at, u.updated_at,
 		       u.onboarding_completed_at
 		FROM oauth_identities oi
 		JOIN users u ON u.id = oi.user_id
 		WHERE oi.provider = $1 AND oi.provider_user_id = $2 AND u.deleted_at IS NULL`,
 		provider, providerUserID).Scan(
 		&user.ID, &user.Email, &user.Name, &user.Bio, &user.City,
-		&user.ProfilePhotoURL, &user.OnboardingCompleted, &user.CreatedAt,
+		&user.ProfilePhotoURL, &user.IsPrivate, &user.OnboardingCompleted, &user.CreatedAt,
 		&user.UpdatedAt, &user.OnboardedAt,
 	)
 	return user, err
@@ -319,11 +319,11 @@ func findUserByEmail(ctx context.Context, tx pgx.Tx, email string) (userResponse
 	var user userResponse
 	err := tx.QueryRow(ctx, `
 		SELECT id, email::text, name, bio, city, profile_photo_url,
-		       onboarding_completed_at IS NOT NULL, created_at, updated_at,
+		       is_private, onboarding_completed_at IS NOT NULL, created_at, updated_at,
 		       onboarding_completed_at
 		FROM users WHERE email = $1 AND deleted_at IS NULL`, email).Scan(
 		&user.ID, &user.Email, &user.Name, &user.Bio, &user.City,
-		&user.ProfilePhotoURL, &user.OnboardingCompleted, &user.CreatedAt,
+		&user.ProfilePhotoURL, &user.IsPrivate, &user.OnboardingCompleted, &user.CreatedAt,
 		&user.UpdatedAt, &user.OnboardedAt,
 	)
 	return user, err
@@ -354,10 +354,10 @@ func createUserFromOAuth(ctx context.Context, tx pgx.Tx, claims oidc.Claims) (us
 		INSERT INTO users (email, password_hash, name)
 		VALUES ($1, encode(gen_random_bytes(32), 'hex'), $2)
 		RETURNING id, email::text, name, bio, city, profile_photo_url,
-		          onboarding_completed_at IS NOT NULL, created_at, updated_at,
+		          is_private, onboarding_completed_at IS NOT NULL, created_at, updated_at,
 		          onboarding_completed_at`, normalizeEmail(claims.Email), name).Scan(
 		&user.ID, &user.Email, &user.Name, &user.Bio, &user.City,
-		&user.ProfilePhotoURL, &user.OnboardingCompleted, &user.CreatedAt,
+		&user.ProfilePhotoURL, &user.IsPrivate, &user.OnboardingCompleted, &user.CreatedAt,
 		&user.UpdatedAt, &user.OnboardedAt,
 	)
 	return user, err

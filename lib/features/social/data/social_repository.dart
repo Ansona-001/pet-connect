@@ -72,6 +72,20 @@ class SocialRepository {
     }
   }
 
+  /// Re-fetches just the owner's pets — used after the "My Pets"
+  /// management screens add/edit/delete a pet, so the app-wide
+  /// active-pet switcher (SocialState.pets/activePetIndex) reflects the
+  /// change without a full [load] (which would also needlessly reset
+  /// feed/candidates/chats state).
+  Future<List<PetProfile>> fetchMyPets() async {
+    try {
+      final response = await _api.dio.get<Map<String, dynamic>>('/me/pets');
+      return _list(_rawData(response)).map(_petFromJson).toList();
+    } catch (error) {
+      throw ApiException.from(error);
+    }
+  }
+
   Future<void> setPostLiked(String postId, bool value) =>
       _toggle('/posts/$postId/like', value);
 

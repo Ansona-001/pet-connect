@@ -10,7 +10,10 @@ import '../../features/auth/presentation/screens/sessions_screen.dart';
 import '../../features/auth/presentation/screens/verify_email_screen.dart';
 import '../../features/onboarding/presentation/screens/onboarding_screen.dart';
 import '../../features/onboarding/presentation/screens/profile_setup_screen.dart';
+import '../../features/pets/presentation/screens/my_pets_screen.dart';
+import '../../features/pets/presentation/screens/pet_form_screen.dart';
 import '../../features/social/presentation/screens/chat_screen.dart';
+import '../../features/social/presentation/screens/edit_profile_screen.dart';
 import '../../features/social/presentation/screens/inbox_screen.dart';
 import '../../features/social/presentation/screens/social_shell_screen.dart';
 import '../../features/splash/splash_screen.dart';
@@ -24,7 +27,22 @@ final goRouterProvider = Provider<GoRouter>((ref) {
   final refreshNotifier = _RouterRefreshNotifier();
   ref.listen<AuthState>(
     authControllerProvider,
-    (previous, next) => refreshNotifier.notify(),
+    (previous, next) {
+      // Only re-run `_redirect` when something it actually reads has
+      // changed. Notifying on every AuthState change (e.g. a profile edit
+      // updating unrelated fields like bio/city) makes GoRouter reprocess
+      // its current route via `redirect`, and doing that while sitting on
+      // a `push()`-ed route (not top-level navigation) was found to
+      // duplicate that route's page — a second instance mounts right as
+      // the first is popped, so e.g. EditProfileScreen's own `pop()` after
+      // a successful save appeared to silently do nothing. Caught by
+      // instrumenting the widget's instance-level lifecycle live, not by
+      // code review — the duplicate page's `initState` fired between the
+      // original's `pop()` call and its `dispose()`.
+      if (previous == null || _affectsRedirect(previous, next)) {
+        refreshNotifier.notify();
+      }
+    },
   );
   ref.onDispose(refreshNotifier.dispose);
 
@@ -114,6 +132,30 @@ final goRouterProvider = Provider<GoRouter>((ref) {
         },
       ),
       GoRoute(
+        path: AppRoutes.editProfile,
+        pageBuilder: (context, state) {
+          return _slideFadePage(
+            state: state,
+            child: const EditProfileScreen(),
+          );
+        },
+      ),
+      GoRoute(
+        path: AppRoutes.pets,
+        pageBuilder: (context, state) {
+          return _slideFadePage(state: state, child: const MyPetsScreen());
+        },
+      ),
+      GoRoute(
+        path: AppRoutes.petForm,
+        pageBuilder: (context, state) {
+          return _slideFadePage(
+            state: state,
+            child: PetFormScreen(petId: state.uri.queryParameters['petId']),
+          );
+        },
+      ),
+      GoRoute(
         path: AppRoutes.chatPath,
         pageBuilder: (context, state) {
           return _slideFadePage(
@@ -127,6 +169,19 @@ final goRouterProvider = Provider<GoRouter>((ref) {
     ],
   );
 });
+
+/// Whether a change from `previous` to `next` could change what
+/// `_redirect` decides — i.e. whether it touches `initialized`,
+/// `isAuthenticated` (user null-ness), `sessionExpired`, or
+/// `onboardingCompleted`. Anything else (name/bio/city/isPrivate edits,
+/// `isLoading` toggling, `error` messages) is irrelevant to routing and
+/// must not trigger a redirect reprocessing pass — see the caller.
+bool _affectsRedirect(AuthState previous, AuthState next) {
+  return previous.initialized != next.initialized ||
+      previous.isAuthenticated != next.isAuthenticated ||
+      previous.sessionExpired != next.sessionExpired ||
+      previous.user?.onboardingCompleted != next.user?.onboardingCompleted;
+}
 
 /// The location a redirect bounced the user away from while unauthenticated,
 /// so it can be restored after they sign back in — see [_redirect] and
