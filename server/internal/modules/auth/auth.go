@@ -18,6 +18,7 @@ import (
 	"petconnect/server/internal/platform/httpx"
 	"petconnect/server/internal/platform/mailer"
 	"petconnect/server/internal/platform/oidc"
+	"petconnect/server/internal/platform/ratelimit"
 )
 
 const (
@@ -100,17 +101,47 @@ func RegisterRoutes(router fiber.Router, db *pgxpool.Pool, tokens *authjwt.Manag
 	return handler
 }
 
+// Rate-limit windows for the auth endpoints most worth throttling —
+// brief defect #5. IP-keyed rather than account-keyed: account-keying
+// would require looking the account up (an extra DB round trip, and its
+// own timing signal) before deciding whether to even attempt the
+// operation, for endpoints whose entire point is resisting abuse from a
+// single source hammering many accounts or many attempts. Limits are
+// deliberately generous relative to real usage — this is abuse
+// resistance, not a tight fairness budget — and every rejection returns
+// the same generic response via ratelimit.Limit regardless of which
+// endpoint or why, so a client can't distinguish rate-limiting from any
+// other rejection. Endpoints not listed here (logout, providers, every
+// OAuth route) are intentionally left unlimited: OAuth already has its
+// own short-lived Redis-backed state/ticket TTLs providing an implicit
+// throttle, and logout/providers have no meaningful abuse value.
+const rateLimitWindow = 15 * time.Minute
+
+var rateLimits = map[string]int{
+	"register":            5,
+	"login":               10,
+	"refresh":             60,
+	"forgot-password":     5,
+	"resend-verification": 5,
+	"reset-password":      10,
+	"verify-email":        20,
+}
+
+func (h *Handler) rateLimited(name string) fiber.Handler {
+	return ratelimit.Limit(h.redis, name, rateLimits[name], rateLimitWindow, ratelimit.KeyByIP)
+}
+
 // RegisterRoutes mounts this handler's public routes.
 func (h *Handler) RegisterRoutes(router fiber.Router) {
 	auth := router.Group("/auth")
-	auth.Post("/register", h.register)
-	auth.Post("/login", h.login)
-	auth.Post("/refresh", h.refresh)
+	auth.Post("/register", h.rateLimited("register"), h.register)
+	auth.Post("/login", h.rateLimited("login"), h.login)
+	auth.Post("/refresh", h.rateLimited("refresh"), h.refresh)
 	auth.Post("/logout", h.logout)
-	auth.Post("/verify-email", h.verifyEmail)
-	auth.Post("/resend-verification", h.resendVerification)
-	auth.Post("/forgot-password", h.forgotPassword)
-	auth.Post("/reset-password", h.resetPassword)
+	auth.Post("/verify-email", h.rateLimited("verify-email"), h.verifyEmail)
+	auth.Post("/resend-verification", h.rateLimited("resend-verification"), h.resendVerification)
+	auth.Post("/forgot-password", h.rateLimited("forgot-password"), h.forgotPassword)
+	auth.Post("/reset-password", h.rateLimited("reset-password"), h.resetPassword)
 	auth.Get("/providers", h.listProviders)
 	auth.Get("/oauth/google/start", h.googleStart)
 	auth.Get("/oauth/google/callback", h.googleCallback)
