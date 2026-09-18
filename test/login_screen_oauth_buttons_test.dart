@@ -25,7 +25,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
   }
 
-  testWidgets('Google button is hidden when the provider is not configured', (
+  testWidgets('both buttons are hidden when no provider is configured', (
     tester,
   ) async {
     await pumpLogin(
@@ -34,13 +34,14 @@ void main() {
     );
 
     expect(find.text('Continue with Google'), findsNothing);
+    expect(find.text('Continue with Apple'), findsNothing);
     expect(
       find.textContaining('become available after provider credentials'),
       findsOneWidget,
     );
   });
 
-  testWidgets('Google button appears once the provider is configured', (
+  testWidgets('Google button appears once Google alone is configured', (
     tester,
   ) async {
     await pumpLogin(
@@ -49,9 +50,38 @@ void main() {
     );
 
     expect(find.text('Continue with Google'), findsOneWidget);
+    expect(find.text('Continue with Apple'), findsNothing);
     expect(
       find.textContaining('become available after provider credentials'),
       findsNothing,
     );
+  });
+
+  testWidgets('Apple button appears once Apple alone is configured', (
+    tester,
+  ) async {
+    await pumpLogin(
+      tester,
+      const AuthProviders(googleEnabled: false, appleEnabled: true),
+    );
+
+    expect(find.text('Continue with Apple'), findsOneWidget);
+    expect(find.text('Continue with Google'), findsNothing);
+    expect(
+      find.textContaining('become available after provider credentials'),
+      findsNothing,
+    );
+  });
+
+  testWidgets('both buttons appear once both providers are configured', (
+    tester,
+  ) async {
+    await pumpLogin(
+      tester,
+      const AuthProviders(googleEnabled: true, appleEnabled: true),
+    );
+
+    expect(find.text('Continue with Google'), findsOneWidget);
+    expect(find.text('Continue with Apple'), findsOneWidget);
   });
 }

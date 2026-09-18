@@ -40,6 +40,7 @@ type Handler struct {
 	mailer     mailer.Sender
 	redis      *redis.Client
 	google     *googleProvider
+	apple      *appleProvider
 }
 
 // GoogleOAuthConfig carries the owner's Google Cloud OAuth client
@@ -74,11 +75,11 @@ const (
 
 var googleIssuers = []string{"https://accounts.google.com", "accounts.google.com"}
 
-// New constructs the authentication module. google may be a zero-value
-// GoogleOAuthConfig — Google Sign-In then stays disabled rather than the
-// call failing, since local/CI environments legitimately have no Google
-// Cloud credentials configured (brief §18).
-func New(db *pgxpool.Pool, tokens *authjwt.Manager, refreshTTL time.Duration, sender mailer.Sender, redisClient *redis.Client, google GoogleOAuthConfig) *Handler {
+// New constructs the authentication module. google/apple may be
+// zero-value configs — each provider then simply stays disabled rather
+// than the call failing, since local/CI environments legitimately have
+// no real OAuth credentials configured (brief §18).
+func New(db *pgxpool.Pool, tokens *authjwt.Manager, refreshTTL time.Duration, sender mailer.Sender, redisClient *redis.Client, google GoogleOAuthConfig, apple AppleOAuthConfig) *Handler {
 	h := &Handler{db: db, tokens: tokens, refreshTTL: refreshTTL, clock: time.Now, mailer: sender, redis: redisClient}
 	if google.ClientID != "" && google.ClientSecret != "" && google.RedirectURL != "" {
 		h.google = &googleProvider{
@@ -88,12 +89,13 @@ func New(db *pgxpool.Pool, tokens *authjwt.Manager, refreshTTL time.Duration, se
 			verifier:     oidc.NewVerifier(googleJWKSURL, google.ClientID, googleIssuers...),
 		}
 	}
+	h.apple = newAppleProvider(apple)
 	return h
 }
 
 // RegisterRoutes mounts public authentication routes on a router rooted at /v1.
-func RegisterRoutes(router fiber.Router, db *pgxpool.Pool, tokens *authjwt.Manager, refreshTTL time.Duration, sender mailer.Sender, redisClient *redis.Client, google GoogleOAuthConfig) *Handler {
-	handler := New(db, tokens, refreshTTL, sender, redisClient, google)
+func RegisterRoutes(router fiber.Router, db *pgxpool.Pool, tokens *authjwt.Manager, refreshTTL time.Duration, sender mailer.Sender, redisClient *redis.Client, google GoogleOAuthConfig, apple AppleOAuthConfig) *Handler {
+	handler := New(db, tokens, refreshTTL, sender, redisClient, google, apple)
 	handler.RegisterRoutes(router)
 	return handler
 }
@@ -112,6 +114,12 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	auth.Get("/providers", h.listProviders)
 	auth.Get("/oauth/google/start", h.googleStart)
 	auth.Get("/oauth/google/callback", h.googleCallback)
+	auth.Get("/oauth/apple/start", h.appleStart)
+	// Apple requires response_mode=form_post whenever the request scope
+	// includes name/email (which this flow needs to create an account) —
+	// unlike Google, Apple's redirect back to us is a POST with a
+	// form-encoded body, not a GET with query parameters.
+	auth.Post("/oauth/apple/callback", h.appleCallback)
 	auth.Post("/oauth/exchange", h.oauthExchange)
 }
 

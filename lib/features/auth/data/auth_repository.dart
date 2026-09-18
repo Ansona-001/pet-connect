@@ -11,9 +11,9 @@ final authRepositoryProvider = Provider<AuthRepository>((ref) {
   return AuthRepository(ref.watch(apiClientProvider));
 });
 
-/// Backs the "Sign in with Google" button's visibility on [LoginScreen] —
-/// fetched once per app session since provider configuration doesn't
-/// change while the app is running.
+/// Backs the "Continue with Google"/"Continue with Apple" buttons'
+/// visibility on [LoginScreen] — fetched once per app session since
+/// provider configuration doesn't change while the app is running.
 final authProvidersProvider = FutureProvider<AuthProviders>((ref) {
   return ref.watch(authRepositoryProvider).authProviders();
 });
@@ -133,11 +133,16 @@ class AuthRepository {
   /// system browser. Only meaningful when [authProviders] reports
   /// `googleEnabled` — otherwise the server rejects this with a clear
   /// "not configured" error.
-  Future<String> startGoogleSignIn() async {
+  Future<String> startGoogleSignIn() => _startOAuth('/auth/oauth/google/start');
+
+  /// Begins Sign in with Apple (server/internal/modules/auth/
+  /// apple_oauth.go's GET /auth/oauth/apple/start) — same contract as
+  /// [startGoogleSignIn], gated on `appleEnabled`.
+  Future<String> startAppleSignIn() => _startOAuth('/auth/oauth/apple/start');
+
+  Future<String> _startOAuth(String path) async {
     try {
-      final response = await _api.dio.get<Map<String, dynamic>>(
-        '/auth/oauth/google/start',
-      );
+      final response = await _api.dio.get<Map<String, dynamic>>(path);
       final data = _data(response);
       final url = data['authorization_url']?.toString() ?? '';
       if (url.isEmpty) {

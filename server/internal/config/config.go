@@ -36,6 +36,21 @@ type Config struct {
 	GoogleClientID     string
 	GoogleClientSecret string
 	GoogleRedirectURL  string
+
+	// Sign in with Apple (ADR 0005). Apple's OAuth client "secret" isn't a
+	// static value like Google's — it's a short-lived ES256 JWT the server
+	// mints per request from the owner's Apple Developer private key (see
+	// auth.appleProvider.clientSecret), so what's configured here is the
+	// raw material for that (Services ID, Team ID, Key ID, and the .p8
+	// private key contents) rather than a client secret directly. All five
+	// default to empty for the same reason as Google's: a real Apple
+	// Developer account/team is a blocking external input this repo
+	// cannot invent, and its absence is what keeps the feature disabled.
+	AppleClientID    string
+	AppleTeamID      string
+	AppleKeyID       string
+	ApplePrivateKey  string
+	AppleRedirectURL string
 }
 
 func Load() (Config, error) {
@@ -78,6 +93,12 @@ func Load() (Config, error) {
 		GoogleClientID:     env("GOOGLE_CLIENT_ID", ""),
 		GoogleClientSecret: env("GOOGLE_CLIENT_SECRET", ""),
 		GoogleRedirectURL:  env("GOOGLE_REDIRECT_URL", ""),
+
+		AppleClientID:    env("APPLE_CLIENT_ID", ""),
+		AppleTeamID:      env("APPLE_TEAM_ID", ""),
+		AppleKeyID:       env("APPLE_KEY_ID", ""),
+		ApplePrivateKey:  normalizePEM(env("APPLE_PRIVATE_KEY", "")),
+		AppleRedirectURL: env("APPLE_REDIRECT_URL", ""),
 	}
 
 	if cfg.Environment != "local" {
@@ -96,6 +117,20 @@ func env(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// normalizePEM lets APPLE_PRIVATE_KEY be supplied either as a real
+// multi-line value (most .env loaders and orchestrators support this) or
+// as a single-line value with literal `\n` escapes (common when a secret
+// is passed through a shell variable or a CI secret store that flattens
+// newlines) — x509 parsing requires real newlines, so a single-line value
+// is unescaped; a value that already contains real newlines is left
+// untouched.
+func normalizePEM(value string) string {
+	if value == "" || strings.Contains(value, "\n") {
+		return value
+	}
+	return strings.ReplaceAll(value, `\n`, "\n")
 }
 
 func split(value string) []string {

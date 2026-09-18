@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/redis/go-redis/v9"
 
 	"petconnect/server/internal/platform/authjwt"
 	"petconnect/server/internal/platform/httpx"
@@ -49,14 +50,54 @@ type providersResponse struct {
 func (h *Handler) listProviders(c *fiber.Ctx) error {
 	return httpx.OK(c, providersResponse{
 		GoogleEnabled: h.google != nil,
-		// Apple Sign-In lands in a later slice reusing this same oidc
-		// package (ADR 0005) — always false until then.
-		AppleEnabled: false,
+		AppleEnabled:  h.apple != nil,
 	})
 }
 
 type authorizationURLResponse struct {
 	AuthorizationURL string `json:"authorization_url"`
+}
+
+// beginOAuthState generates the CSRF state parameter and PKCE verifier
+// shared by every provider's start endpoint, and stores their mapping in
+// Redis so redeemOAuthState can look the verifier up by state later.
+func beginOAuthState(ctx context.Context, redisClient *redis.Client) (state, verifier string, err error) {
+	state, _, err = authjwt.NewOpaqueToken()
+	if err != nil {
+		return "", "", err
+	}
+	verifier, _, err = authjwt.NewOpaqueToken()
+	if err != nil {
+		return "", "", err
+	}
+	if err := redisClient.Set(ctx, oauthStateKeyPrefix+state, verifier, oauthStateTTL).Err(); err != nil {
+		return "", "", err
+	}
+	return state, verifier, nil
+}
+
+// redeemOAuthState looks up and deletes the PKCE verifier for state in
+// one step: a state value only ever resolves once, so a replayed or
+// forged callback (e.g. a stale bookmarked URL) can't be replayed twice.
+func redeemOAuthState(ctx context.Context, redisClient *redis.Client, state string) (string, error) {
+	return redisClient.GetDel(ctx, oauthStateKeyPrefix+state).Result()
+}
+
+// mintExchangeTicket stores result behind a fresh single-use ticket — see
+// oauthExchange — shared by every provider's callback.
+func (h *Handler) mintExchangeTicket(ctx context.Context, result tokenResponse) (string, error) {
+	ticket, _, err := authjwt.NewOpaqueToken()
+	if err != nil {
+		return "", err
+	}
+	payload, err := json.Marshal(result)
+	if err != nil {
+		return "", err
+	}
+	if err := h.redis.Set(ctx, oauthExchangeKeyPrefix+ticket, payload, oauthExchangeTicketTTL).Err(); err != nil {
+		return "", err
+	}
+	return ticket, nil
 }
 
 // googleStart begins the Authorization Code + PKCE flow. It returns the
@@ -68,19 +109,11 @@ func (h *Handler) googleStart(c *fiber.Ctx) error {
 		return httpx.Problem(c, fiber.StatusServiceUnavailable, "google_oauth_not_configured", "Google Sign-In is not configured on this server.")
 	}
 
-	state, _, err := authjwt.NewOpaqueToken()
-	if err != nil {
-		return internalProblem(c)
-	}
-	verifier, _, err := authjwt.NewOpaqueToken()
+	state, verifier, err := beginOAuthState(c.UserContext(), h.redis)
 	if err != nil {
 		return internalProblem(c)
 	}
 	challenge := pkceChallenge(verifier)
-
-	if err := h.redis.Set(c.UserContext(), oauthStateKeyPrefix+state, verifier, oauthStateTTL).Err(); err != nil {
-		return internalProblem(c)
-	}
 
 	query := url.Values{
 		"client_id":             {h.google.clientID},
@@ -125,7 +158,7 @@ func (h *Handler) googleCallback(c *fiber.Ctx) error {
 		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_oauth_callback", "The OAuth callback is missing required parameters.")
 	}
 
-	verifier, err := h.redis.GetDel(c.UserContext(), oauthStateKeyPrefix+state).Result()
+	verifier, err := redeemOAuthState(c.UserContext(), h.redis, state)
 	if err != nil {
 		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_oauth_state", "This sign-in attempt has expired or was already used. Please try again.")
 	}
@@ -148,15 +181,8 @@ func (h *Handler) googleCallback(c *fiber.Ctx) error {
 		return internalProblem(c)
 	}
 
-	ticket, _, err := authjwt.NewOpaqueToken()
+	ticket, err := h.mintExchangeTicket(c.UserContext(), result)
 	if err != nil {
-		return internalProblem(c)
-	}
-	payload, err := json.Marshal(result)
-	if err != nil {
-		return internalProblem(c)
-	}
-	if err := h.redis.Set(c.UserContext(), oauthExchangeKeyPrefix+ticket, payload, oauthExchangeTicketTTL).Err(); err != nil {
 		return internalProblem(c)
 	}
 
@@ -198,8 +224,8 @@ func (h *Handler) oauthExchange(c *fiber.Ctx) error {
 
 // linkOrCreateOAuthAccount applies the safe account-linking rules (brief
 // §13) shared by every OIDC provider — written against oidc.Claims, not
-// a Google-specific type, so Apple Sign-In (Day 17) can call this
-// unchanged with provider="apple":
+// a Google-specific type, so both Google (provider="google") and Apple
+// (provider="apple") call this unchanged:
 //
 //  1. An oauth_identities row already links this exact provider account
 //     to a PetConnect user: log in as that user. No email comparison

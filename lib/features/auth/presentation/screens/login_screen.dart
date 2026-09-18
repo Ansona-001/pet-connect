@@ -114,6 +114,21 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
   }
 
+  /// Same shape and same "server done, deep-link receiver not yet built"
+  /// boundary as [_signInWithGoogle] — see
+  /// server/internal/modules/auth/apple_oauth.go.
+  Future<void> _signInWithApple() async {
+    try {
+      final url = await ref.read(authRepositoryProvider).startAppleSignIn();
+      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not start Apple sign-in: $error')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final authState = ref.watch(authControllerProvider);
@@ -295,7 +310,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               );
                               final googleEnabled =
                                   providers.value?.googleEnabled ?? false;
-                              if (!googleEnabled) {
+                              final appleEnabled =
+                                  providers.value?.appleEnabled ?? false;
+                              if (!googleEnabled && !appleEnabled) {
                                 return Center(
                                   child: Text(
                                     'Google and Apple sign-in become available after provider credentials are configured.',
@@ -306,12 +323,29 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                   ),
                                 );
                               }
-                              return OutlinedButton.icon(
-                                onPressed: authState.isLoading
-                                    ? null
-                                    : _signInWithGoogle,
-                                icon: const Icon(Icons.g_mobiledata_rounded),
-                                label: const Text('Continue with Google'),
+                              return Column(
+                                children: [
+                                  if (googleEnabled)
+                                    OutlinedButton.icon(
+                                      onPressed: authState.isLoading
+                                          ? null
+                                          : _signInWithGoogle,
+                                      icon: const Icon(
+                                        Icons.g_mobiledata_rounded,
+                                      ),
+                                      label: const Text('Continue with Google'),
+                                    ),
+                                  if (googleEnabled && appleEnabled)
+                                    const SizedBox(height: AppSpacing.sm),
+                                  if (appleEnabled)
+                                    OutlinedButton.icon(
+                                      onPressed: authState.isLoading
+                                          ? null
+                                          : _signInWithApple,
+                                      icon: const Icon(Icons.apple_rounded),
+                                      label: const Text('Continue with Apple'),
+                                    ),
+                                ],
                               );
                             },
                           ).animate(delay: 200.ms).fadeIn(duration: 420.ms),

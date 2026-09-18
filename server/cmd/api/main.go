@@ -147,6 +147,12 @@ func run() error {
 		ClientID:     cfg.GoogleClientID,
 		ClientSecret: cfg.GoogleClientSecret,
 		RedirectURL:  cfg.GoogleRedirectURL,
+	}, auth.AppleOAuthConfig{
+		ClientID:    cfg.AppleClientID,
+		TeamID:      cfg.AppleTeamID,
+		KeyID:       cfg.AppleKeyID,
+		PrivateKey:  cfg.ApplePrivateKey,
+		RedirectURL: cfg.AppleRedirectURL,
 	})
 	// The socket route authenticates with a single-use ticket, so mount it
 	// before the bearer middleware that protects the rest of /v1.
