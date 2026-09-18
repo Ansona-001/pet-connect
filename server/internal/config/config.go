@@ -26,6 +26,16 @@ type Config struct {
 	DemoAssetDir    string
 	PublicBaseURL   string
 	MaxUploadBytes  int64
+
+	// Google Sign-In (ADR 0005). All three deliberately default to empty:
+	// the owner's Google Cloud project/client credentials are a genuinely
+	// blocking external input (brief §18) this repo cannot invent. Their
+	// absence is exactly what keeps the feature disabled — see
+	// auth.googleOAuthConfigured — rather than a separate on/off flag that
+	// could drift out of sync with whether real credentials exist.
+	GoogleClientID     string
+	GoogleClientSecret string
+	GoogleRedirectURL  string
 }
 
 func Load() (Config, error) {
@@ -64,6 +74,10 @@ func Load() (Config, error) {
 		DemoAssetDir:    env("DEMO_ASSET_DIR", "../assets/images"),
 		PublicBaseURL:   strings.TrimRight(env("PUBLIC_BASE_URL", "http://localhost:8080"), "/"),
 		MaxUploadBytes:  maxUpload,
+
+		GoogleClientID:     env("GOOGLE_CLIENT_ID", ""),
+		GoogleClientSecret: env("GOOGLE_CLIENT_SECRET", ""),
+		GoogleRedirectURL:  env("GOOGLE_REDIRECT_URL", ""),
 	}
 
 	if cfg.Environment != "local" {

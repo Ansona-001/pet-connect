@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../core/routes/app_router.dart' show pendingRedirectProvider;
 import '../../../../core/routes/routes.dart';
@@ -14,6 +15,7 @@ import '../../../../shared/widgets/buttons/primary_button.dart';
 import '../../../../shared/widgets/cards/glass_card.dart';
 import '../../../../shared/widgets/inputs/app_text_field.dart';
 import '../../application/auth_controller.dart';
+import '../../data/auth_repository.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -90,6 +92,26 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     final pending = pendingNotifier.state;
     pendingNotifier.state = null;
     context.go(pending ?? AppRoutes.home);
+  }
+
+  /// Opens Google's consent screen in the system browser. The server-side
+  /// half of this flow (authorization URL, PKCE, safe account linking) is
+  /// complete and independently verified — see
+  /// server/internal/modules/auth/oauth.go — but the app does not yet
+  /// register a URL scheme to receive the callback redirect, so this
+  /// currently hands off to the browser without a way back into the app.
+  /// That deep-link receiver is deliberately left for its own follow-up
+  /// slice rather than guessed at here.
+  Future<void> _signInWithGoogle() async {
+    try {
+      final url = await ref.read(authRepositoryProvider).startGoogleSignIn();
+      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not start Google sign-in: $error')),
+      );
+    }
   }
 
   @override
@@ -266,14 +288,32 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
                           const SizedBox(height: AppSpacing.xl),
 
-                          Center(
-                            child: Text(
-                              'Google and Apple sign-in become available after provider credentials are configured.',
-                              textAlign: TextAlign.center,
-                              style: AppTextStyles.caption.copyWith(
-                                color: AppColors.textSecondary,
-                              ),
-                            ),
+                          Consumer(
+                            builder: (context, ref, _) {
+                              final providers = ref.watch(
+                                authProvidersProvider,
+                              );
+                              final googleEnabled =
+                                  providers.value?.googleEnabled ?? false;
+                              if (!googleEnabled) {
+                                return Center(
+                                  child: Text(
+                                    'Google and Apple sign-in become available after provider credentials are configured.',
+                                    textAlign: TextAlign.center,
+                                    style: AppTextStyles.caption.copyWith(
+                                      color: AppColors.textSecondary,
+                                    ),
+                                  ),
+                                );
+                              }
+                              return OutlinedButton.icon(
+                                onPressed: authState.isLoading
+                                    ? null
+                                    : _signInWithGoogle,
+                                icon: const Icon(Icons.g_mobiledata_rounded),
+                                label: const Text('Continue with Google'),
+                              );
+                            },
                           ).animate(delay: 200.ms).fadeIn(duration: 420.ms),
 
                           const SizedBox(height: AppSpacing.lg),

@@ -17,6 +17,7 @@ import (
 	"petconnect/server/internal/platform/authjwt"
 	"petconnect/server/internal/platform/httpx"
 	"petconnect/server/internal/platform/mailer"
+	"petconnect/server/internal/platform/oidc"
 )
 
 const (
@@ -38,16 +39,61 @@ type Handler struct {
 	clock      func() time.Time
 	mailer     mailer.Sender
 	redis      *redis.Client
+	google     *googleProvider
 }
 
-// New constructs the authentication module.
-func New(db *pgxpool.Pool, tokens *authjwt.Manager, refreshTTL time.Duration, sender mailer.Sender, redisClient *redis.Client) *Handler {
-	return &Handler{db: db, tokens: tokens, refreshTTL: refreshTTL, clock: time.Now, mailer: sender, redis: redisClient}
+// GoogleOAuthConfig carries the owner's Google Cloud OAuth client
+// credentials (config.Config's GoogleClientID/Secret/RedirectURL — see
+// that struct's doc comment for why these default to empty). Passed as
+// its own type, rather than three bare strings, so New's signature reads
+// at the call site and so googleOAuthConfigured has one obvious thing to
+// check.
+type GoogleOAuthConfig struct {
+	ClientID     string
+	ClientSecret string
+	RedirectURL  string
+}
+
+// googleProvider is non-nil only once all three GoogleOAuthConfig fields
+// are non-empty — see New. Its presence/absence *is* the on/off switch
+// for the feature (GET /auth/providers, and every /auth/oauth/google/*
+// route), matching config.go's comment: no separate feature flag exists
+// to drift out of sync with whether real credentials are configured.
+type googleProvider struct {
+	clientID     string
+	clientSecret string
+	redirectURL  string
+	verifier     *oidc.Verifier
+}
+
+const (
+	googleAuthorizationEndpoint = "https://accounts.google.com/o/oauth2/v2/auth"
+	googleTokenEndpoint         = "https://oauth2.googleapis.com/token"
+	googleJWKSURL               = "https://www.googleapis.com/oauth2/v3/certs"
+)
+
+var googleIssuers = []string{"https://accounts.google.com", "accounts.google.com"}
+
+// New constructs the authentication module. google may be a zero-value
+// GoogleOAuthConfig — Google Sign-In then stays disabled rather than the
+// call failing, since local/CI environments legitimately have no Google
+// Cloud credentials configured (brief §18).
+func New(db *pgxpool.Pool, tokens *authjwt.Manager, refreshTTL time.Duration, sender mailer.Sender, redisClient *redis.Client, google GoogleOAuthConfig) *Handler {
+	h := &Handler{db: db, tokens: tokens, refreshTTL: refreshTTL, clock: time.Now, mailer: sender, redis: redisClient}
+	if google.ClientID != "" && google.ClientSecret != "" && google.RedirectURL != "" {
+		h.google = &googleProvider{
+			clientID:     google.ClientID,
+			clientSecret: google.ClientSecret,
+			redirectURL:  google.RedirectURL,
+			verifier:     oidc.NewVerifier(googleJWKSURL, google.ClientID, googleIssuers...),
+		}
+	}
+	return h
 }
 
 // RegisterRoutes mounts public authentication routes on a router rooted at /v1.
-func RegisterRoutes(router fiber.Router, db *pgxpool.Pool, tokens *authjwt.Manager, refreshTTL time.Duration, sender mailer.Sender, redisClient *redis.Client) *Handler {
-	handler := New(db, tokens, refreshTTL, sender, redisClient)
+func RegisterRoutes(router fiber.Router, db *pgxpool.Pool, tokens *authjwt.Manager, refreshTTL time.Duration, sender mailer.Sender, redisClient *redis.Client, google GoogleOAuthConfig) *Handler {
+	handler := New(db, tokens, refreshTTL, sender, redisClient, google)
 	handler.RegisterRoutes(router)
 	return handler
 }
@@ -63,6 +109,10 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	auth.Post("/resend-verification", h.resendVerification)
 	auth.Post("/forgot-password", h.forgotPassword)
 	auth.Post("/reset-password", h.resetPassword)
+	auth.Get("/providers", h.listProviders)
+	auth.Get("/oauth/google/start", h.googleStart)
+	auth.Get("/oauth/google/callback", h.googleCallback)
+	auth.Post("/oauth/exchange", h.oauthExchange)
 }
 
 type registerRequest struct {

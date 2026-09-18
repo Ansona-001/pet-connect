@@ -143,7 +143,11 @@ func run() error {
 	app.Static("/media/demo", cfg.DemoAssetDir, fiber.Static{MaxAge: 86400})
 
 	v1 := app.Group("/v1")
-	authHandler := auth.RegisterRoutes(v1, db, tokens, cfg.RefreshTokenTTL, mailer.LogSender{}, redisClient)
+	authHandler := auth.RegisterRoutes(v1, db, tokens, cfg.RefreshTokenTTL, mailer.LogSender{}, redisClient, auth.GoogleOAuthConfig{
+		ClientID:     cfg.GoogleClientID,
+		ClientSecret: cfg.GoogleClientSecret,
+		RedirectURL:  cfg.GoogleRedirectURL,
+	})
 	// The socket route authenticates with a single-use ticket, so mount it
 	// before the bearer middleware that protects the rest of /v1.
 	realtimeServer.RegisterSocketRoute(v1)

@@ -3,11 +3,19 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
+import '../domain/auth_providers.dart';
 import '../domain/auth_user.dart';
 import '../domain/session_info.dart';
 
 final authRepositoryProvider = Provider<AuthRepository>((ref) {
   return AuthRepository(ref.watch(apiClientProvider));
+});
+
+/// Backs the "Sign in with Google" button's visibility on [LoginScreen] —
+/// fetched once per app session since provider configuration doesn't
+/// change while the app is running.
+final authProvidersProvider = FutureProvider<AuthProviders>((ref) {
+  return ref.watch(authRepositoryProvider).authProviders();
 });
 
 class AuthRepository {
@@ -117,6 +125,50 @@ class AuthRepository {
       return AuthUser.fromJson(_data(response));
     } catch (error) {
       throw ApiException.from(error);
+    }
+  }
+
+  /// Begins Google Sign-In (server/internal/modules/auth/oauth.go's
+  /// GET /auth/oauth/google/start) and returns the URL to open in the
+  /// system browser. Only meaningful when [authProviders] reports
+  /// `googleEnabled` — otherwise the server rejects this with a clear
+  /// "not configured" error.
+  Future<String> startGoogleSignIn() async {
+    try {
+      final response = await _api.dio.get<Map<String, dynamic>>(
+        '/auth/oauth/google/start',
+      );
+      final data = _data(response);
+      final url = data['authorization_url']?.toString() ?? '';
+      if (url.isEmpty) {
+        throw const ApiException('The server did not return a sign-in URL.');
+      }
+      return url;
+    } catch (error) {
+      throw ApiException.from(error);
+    }
+  }
+
+  /// Which third-party sign-in buttons the server has real credentials
+  /// configured for (server/internal/modules/auth/oauth.go's
+  /// GET /auth/providers) — the single source of truth for button
+  /// visibility, so the client never needs its own copy of "is Google
+  /// configured" to keep in sync with the server's. Defaults every
+  /// provider to disabled on any error (network failure, server down):
+  /// hiding a button that might have worked is a much smaller problem
+  /// than showing one that's guaranteed to fail.
+  Future<AuthProviders> authProviders() async {
+    try {
+      final response = await _api.dio.get<Map<String, dynamic>>(
+        '/auth/providers',
+      );
+      final data = _data(response);
+      return AuthProviders(
+        googleEnabled: data['google_enabled'] == true,
+        appleEnabled: data['apple_enabled'] == true,
+      );
+    } catch (_) {
+      return const AuthProviders(googleEnabled: false, appleEnabled: false);
     }
   }
 
