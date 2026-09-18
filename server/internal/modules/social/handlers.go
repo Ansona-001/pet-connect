@@ -68,6 +68,19 @@ func (h *Handler) listPostsByKind(c *fiber.Ctx, kind string) error {
 		    OR p.author_user_id = $1
 		    OR EXISTS (SELECT 1 FROM follows f WHERE f.user_id = $1 AND f.pet_id = p.pet_id)
 		  )
+		  -- Blocking is enforced both directions (neither party sees the
+		  -- other's posts regardless of who pressed "block"); muting only
+		  -- hides content in the muter's own feed, per brief safety
+		  -- primitives — see internal/modules/safety.
+		  AND NOT EXISTS (
+		    SELECT 1 FROM blocks bl
+		    WHERE (bl.blocker_user_id = $1 AND bl.blocked_user_id = p.author_user_id)
+		       OR (bl.blocker_user_id = p.author_user_id AND bl.blocked_user_id = $1)
+		  )
+		  AND NOT EXISTS (
+		    SELECT 1 FROM mutes mu
+		    WHERE mu.muter_user_id = $1 AND mu.muted_user_id = p.author_user_id
+		  )
 		  AND ($3::timestamptz IS NULL OR (p.created_at, p.id) < ($3::timestamptz, $4::uuid))
 		ORDER BY p.created_at DESC, p.id DESC
 		LIMIT $5`, userID, kind, cursorTime, cursorID, limit+1)

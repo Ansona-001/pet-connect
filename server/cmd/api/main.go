@@ -32,6 +32,7 @@ import (
 	"petconnect/server/internal/modules/media"
 	"petconnect/server/internal/modules/notifications"
 	"petconnect/server/internal/modules/pets"
+	"petconnect/server/internal/modules/safety"
 	"petconnect/server/internal/modules/social"
 	"petconnect/server/internal/platform/authjwt"
 	"petconnect/server/internal/platform/database"
@@ -167,6 +168,7 @@ func run() error {
 	events.RegisterRoutes(protected, db)
 	adoption.RegisterRoutes(protected, db)
 	notifications.RegisterRoutes(protected, db)
+	safety.RegisterRoutes(protected, db)
 
 	matchingService := matching.NewService(db, hub)
 	matching.RegisterRoutes(protected, matchingService)

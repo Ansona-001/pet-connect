@@ -76,6 +76,13 @@ func (s *Service) Candidates(ctx context.Context, userID, sourcePetID uuid.UUID,
 		        WHERE swipe.source_pet_id = source.id
 		          AND swipe.target_pet_id = target.id
 		      )
+		  -- Enforced both directions — see internal/modules/social's feed
+		  -- query for the same pattern and reasoning.
+		  AND NOT EXISTS (
+		        SELECT 1 FROM blocks bl
+		        WHERE (bl.blocker_user_id = $2 AND bl.blocked_user_id = target.owner_id)
+		           OR (bl.blocker_user_id = target.owner_id AND bl.blocked_user_id = $2)
+		      )
 		ORDER BY
 		  CASE WHEN source.location IS NULL OR target.location IS NULL THEN 1 ELSE 0 END,
 		  ST_Distance(source.location, target.location),

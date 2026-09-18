@@ -152,6 +152,13 @@ func (h *Handler) nearbyPets(c *fiber.Ctx) error {
 		  WHERE origin.location IS NOT NULL AND p.location IS NOT NULL
 		    AND p.owner_id <> $1 AND p.deleted_at IS NULL AND p.status = 'active'
 		    AND owner.deleted_at IS NULL
+		    -- Enforced both directions — see internal/modules/social's feed
+		    -- query for the same pattern and reasoning.
+		    AND NOT EXISTS (
+		      SELECT 1 FROM blocks bl
+		      WHERE (bl.blocker_user_id = $1 AND bl.blocked_user_id = p.owner_id)
+		         OR (bl.blocker_user_id = p.owner_id AND bl.blocked_user_id = $1)
+		    )
 		    AND ST_DWithin(p.location, origin.location, $5::double precision)
 		    AND ($6 = '' OR lower(p.pet_type) = $6)
 		    AND ($7 = '' OR p.breed ILIKE '%' || $7 || '%')
