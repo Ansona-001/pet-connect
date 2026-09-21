@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"petconnect/server/internal/platform/httpx"
+	"petconnect/server/internal/platform/visibility"
 )
 
 type Handler struct {
@@ -105,6 +106,114 @@ func (h *Handler) listPostsByKind(c *fiber.Ctx, kind string) error {
 	}
 	if err := rows.Err(); err != nil {
 		return httpx.Problem(c, fiber.StatusInternalServerError, "social_query_failed", "The social feed could not be loaded.")
+	}
+
+	nextCursor := ""
+	if len(items) > limit {
+		items = items[:limit]
+		last := items[len(items)-1]
+		nextCursor = encodeTimeCursor(last.CreatedAt, last.ID)
+	}
+	return httpx.OK(c, postPage{Items: items, NextCursor: nextCursor})
+}
+
+func (h *Handler) listPetPosts(c *fiber.Ctx) error {
+	return h.listPetPostsByKind(c, "post")
+}
+
+func (h *Handler) listPetReels(c *fiber.Ctx) error {
+	return h.listPetPostsByKind(c, "reel")
+}
+
+// listPetPostsByKind serves one pet's own posts/reels tab — brief
+// Milestone 2: "Public pet profile & media tabs". Deliberately its own
+// query rather than a parameterized variant of listPostsByKind: that
+// query's inclusion rule is "everything public, own, or followed across
+// every pet"; this one is "this one pet's posts, subject to its own
+// visibility/follow rule" — different enough shapes that forcing them
+// through one function would obscure both. Muting is skipped here on
+// purpose (unlike the global feed): muting only declutters a viewer's
+// own passive feed, it doesn't block a deliberate visit to a profile —
+// blocking, via visibility.ForPet, still applies.
+func (h *Handler) listPetPostsByKind(c *fiber.Ctx, kind string) error {
+	userID, err := httpx.UserID(c)
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusUnauthorized, "authentication_required", "A valid access token is required.")
+	}
+	petID, err := httpx.UUIDParam(c, "petId")
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_pet_id", "pet id must be a valid UUID.")
+	}
+	limit, err := pageSize(c.Query("limit"))
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_limit", err.Error())
+	}
+
+	access, err := visibility.ForPet(c.UserContext(), h.db, petID, userID)
+	if errors.Is(err, visibility.ErrNotFound) {
+		return httpx.Problem(c, fiber.StatusNotFound, "pet_not_found", "The pet was not found.")
+	}
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "social_query_failed", "The pet's media could not be loaded.")
+	}
+	if access.Restricted {
+		return httpx.OK(c, postPage{Items: []Post{}})
+	}
+
+	var cursorTime any
+	var cursorID any
+	if raw := strings.TrimSpace(c.Query("cursor")); raw != "" {
+		cursor, decodeErr := decodeTimeCursor(raw)
+		if decodeErr != nil {
+			return httpx.Problem(c, fiber.StatusBadRequest, "invalid_cursor", "The pagination cursor is invalid.")
+		}
+		cursorTime, cursorID = cursor.CreatedAt, cursor.ID
+	}
+
+	rows, err := h.db.Query(c.UserContext(), `
+		SELECT p.id, p.pet_id, pet.name, pet.primary_image_url,
+		       p.author_user_id, author.name, p.kind, p.caption,
+		       p.location_name, p.media_url, p.media_type, p.visibility,
+		       (SELECT count(*) FROM post_likes pl WHERE pl.post_id = p.id),
+		       (SELECT count(*) FROM comments cm WHERE cm.post_id = p.id AND cm.deleted_at IS NULL),
+		       EXISTS (SELECT 1 FROM post_likes pl WHERE pl.post_id = p.id AND pl.user_id = $1),
+		       EXISTS (SELECT 1 FROM post_saves ps WHERE ps.post_id = p.id AND ps.user_id = $1),
+		       p.created_at
+		FROM posts p
+		JOIN pets pet ON pet.id = p.pet_id
+		JOIN users author ON author.id = p.author_user_id
+		WHERE p.pet_id = $2
+		  AND p.deleted_at IS NULL
+		  AND p.kind = $3
+		  AND (
+		    p.visibility = 'public'
+		    OR p.author_user_id = $1
+		    OR EXISTS (SELECT 1 FROM follows f WHERE f.user_id = $1 AND f.pet_id = p.pet_id)
+		  )
+		  AND ($4::timestamptz IS NULL OR (p.created_at, p.id) < ($4::timestamptz, $5::uuid))
+		ORDER BY p.created_at DESC, p.id DESC
+		LIMIT $6`, userID, petID, kind, cursorTime, cursorID, limit+1)
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "social_query_failed", "The pet's media could not be loaded.")
+	}
+	defer rows.Close()
+
+	items := make([]Post, 0, limit)
+	for rows.Next() {
+		var item Post
+		if err := rows.Scan(
+			&item.ID, &item.PetID, &item.PetName, &item.PetImageURL,
+			&item.AuthorUserID, &item.AuthorName, &item.Kind, &item.Caption,
+			&item.LocationName, &item.MediaURL, &item.MediaType, &item.Visibility,
+			&item.LikeCount, &item.CommentCount, &item.LikedByMe, &item.SavedByMe,
+			&item.CreatedAt,
+		); err != nil {
+			return httpx.Problem(c, fiber.StatusInternalServerError, "social_query_failed", "The pet's media could not be loaded.")
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "social_query_failed", "The pet's media could not be loaded.")
 	}
 
 	nextCursor := ""
@@ -408,6 +517,85 @@ func (h *Handler) listStories(c *fiber.Ctx) error {
 		  AND ($2::timestamptz IS NULL OR (s.created_at, s.id) < ($2::timestamptz, $3::uuid))
 		ORDER BY s.created_at DESC, s.id DESC
 		LIMIT $4`, userID, cursorTime, cursorID, limit+1)
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "story_query_failed", "Stories could not be loaded.")
+	}
+	defer rows.Close()
+	items := make([]Story, 0, limit)
+	for rows.Next() {
+		var item Story
+		var overlay []byte
+		if err := rows.Scan(&item.ID, &item.PetID, &item.PetName, &item.PetImageURL, &item.AuthorName, &item.MediaURL, &item.MediaType, &overlay, &item.ExpiresAt, &item.CreatedAt); err != nil {
+			return httpx.Problem(c, fiber.StatusInternalServerError, "story_query_failed", "Stories could not be loaded.")
+		}
+		item.TextOverlay = map[string]any{}
+		if len(overlay) > 0 && json.Unmarshal(overlay, &item.TextOverlay) != nil {
+			return httpx.Problem(c, fiber.StatusInternalServerError, "story_query_failed", "Stories could not be loaded.")
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "story_query_failed", "Stories could not be loaded.")
+	}
+	nextCursor := ""
+	if len(items) > limit {
+		items = items[:limit]
+		last := items[len(items)-1]
+		nextCursor = encodeTimeCursor(last.CreatedAt, last.ID)
+	}
+	return httpx.OK(c, storyPage{Items: items, NextCursor: nextCursor})
+}
+
+// listPetStories serves one pet's own active stories — the third public
+// pet-profile media tab, alongside listPetPostsByKind's posts/reels.
+func (h *Handler) listPetStories(c *fiber.Ctx) error {
+	userID, err := httpx.UserID(c)
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusUnauthorized, "authentication_required", "A valid access token is required.")
+	}
+	petID, err := httpx.UUIDParam(c, "petId")
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_pet_id", "pet id must be a valid UUID.")
+	}
+	limit, err := pageSize(c.Query("limit"))
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_limit", err.Error())
+	}
+
+	access, err := visibility.ForPet(c.UserContext(), h.db, petID, userID)
+	if errors.Is(err, visibility.ErrNotFound) {
+		return httpx.Problem(c, fiber.StatusNotFound, "pet_not_found", "The pet was not found.")
+	}
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "story_query_failed", "Stories could not be loaded.")
+	}
+	if access.Restricted {
+		return httpx.OK(c, storyPage{Items: []Story{}})
+	}
+
+	var cursorTime any
+	var cursorID any
+	if raw := strings.TrimSpace(c.Query("cursor")); raw != "" {
+		cursor, decodeErr := decodeTimeCursor(raw)
+		if decodeErr != nil {
+			return httpx.Problem(c, fiber.StatusBadRequest, "invalid_cursor", "The pagination cursor is invalid.")
+		}
+		cursorTime, cursorID = cursor.CreatedAt, cursor.ID
+	}
+
+	rows, err := h.db.Query(c.UserContext(), `
+		SELECT s.id, s.pet_id, p.name, p.primary_image_url, u.name,
+		       s.media_url, s.media_type, s.text_overlay, s.expires_at, s.created_at
+		FROM stories s
+		JOIN pets p ON p.id = s.pet_id
+		JOIN users u ON u.id = s.author_user_id
+		WHERE s.pet_id = $2 AND s.deleted_at IS NULL AND s.expires_at > now()
+		  AND (s.author_user_id = $1 OR EXISTS (
+		    SELECT 1 FROM follows f WHERE f.user_id = $1 AND f.pet_id = s.pet_id
+		  ))
+		  AND ($3::timestamptz IS NULL OR (s.created_at, s.id) < ($3::timestamptz, $4::uuid))
+		ORDER BY s.created_at DESC, s.id DESC
+		LIMIT $5`, userID, petID, cursorTime, cursorID, limit+1)
 	if err != nil {
 		return httpx.Problem(c, fiber.StatusInternalServerError, "story_query_failed", "Stories could not be loaded.")
 	}

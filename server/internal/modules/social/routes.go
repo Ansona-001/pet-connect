@@ -24,4 +24,11 @@ func RegisterRoutes(router fiber.Router, db *pgxpool.Pool) {
 
 	router.Get("/reels", handler.listReels)
 	router.Post("/reels", handler.createReel)
+
+	// Public pet profile media tabs (brief Milestone 2) — one pet's own
+	// posts/reels/stories, subject to that pet's own visibility rules
+	// (see internal/platform/visibility), not the caller's global feed.
+	router.Get("/pets/:petId/posts", handler.listPetPosts)
+	router.Get("/pets/:petId/reels", handler.listPetReels)
+	router.Get("/pets/:petId/stories", handler.listPetStories)
 }

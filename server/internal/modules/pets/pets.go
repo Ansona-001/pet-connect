@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"petconnect/server/internal/platform/httpx"
+	"petconnect/server/internal/platform/visibility"
 )
 
 const petColumns = `id, owner_id, name, pet_type, breed, birth_date::text,
@@ -81,6 +82,36 @@ type pet struct {
 	Status          string    `json:"status"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
+	// Restricted is set only on GET /pets/:petId for a non-owner viewer
+	// of a private account's pet who doesn't follow it — see
+	// applyVisibility. Omitted (false) in every other response, including
+	// the owner's own /me/pets list and create/patch results.
+	Restricted bool `json:"restricted,omitempty"`
+}
+
+// applyVisibility reduces result in place for a non-owner viewer,
+// per ADR 0002 (location) and brief Milestone 2's privacy rules (private
+// accounts): exact coordinates are the owner's alone regardless of
+// access.Restricted, and a private owner's non-follower/non-owner
+// viewers additionally get identity fields only — name, type, breed,
+// gender, photo, verification, and status — with bio, personality,
+// interests, weight, and birth date all cleared rather than sent as
+// misleadingly-present empty/zero values (Restricted:true tells the
+// client why they're absent).
+func applyVisibility(result *pet, access visibility.PetAccess) {
+	if access.IsOwner {
+		return
+	}
+	result.Location = nil
+	if !access.Restricted {
+		return
+	}
+	result.Restricted = true
+	result.Bio = ""
+	result.Personality = []string{}
+	result.Interests = []string{}
+	result.WeightKG = nil
+	result.BirthDate = nil
 }
 
 type createRequest struct {
@@ -207,17 +238,27 @@ func (h *Handler) get(c *fiber.Ctx) error {
 		return invalidPetIDProblem(c)
 	}
 
+	access, err := visibility.ForPet(c.UserContext(), h.db, petID, requesterID)
+	if errors.Is(err, visibility.ErrNotFound) {
+		return notFoundProblem(c)
+	}
+	if err != nil {
+		return internalProblem(c)
+	}
+
+	// visibility.ForPet already validated existence/access, so this scan
+	// only needs the row itself, not to re-derive the same predicate.
 	result, err := scanPet(h.db.QueryRow(c.UserContext(), `
 		SELECT `+petColumns+`
 		FROM pets
-		WHERE id = $1 AND deleted_at IS NULL
-		  AND (owner_id = $2 OR status = 'active')`, petID, requesterID))
+		WHERE id = $1 AND deleted_at IS NULL`, petID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return notFoundProblem(c)
 	}
 	if err != nil {
 		return internalProblem(c)
 	}
+	applyVisibility(&result, access)
 	return httpx.OK(c, result)
 }
 
