@@ -40,6 +40,7 @@ import (
 	"petconnect/server/internal/modules/matching"
 	"petconnect/server/internal/modules/notifications"
 	"petconnect/server/internal/modules/pets"
+	"petconnect/server/internal/modules/profile"
 	"petconnect/server/internal/modules/safety"
 	"petconnect/server/internal/modules/social"
 	"petconnect/server/internal/platform/authjwt"
@@ -89,6 +90,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 	protected := v1.Group("", httpx.Authenticate(tokens, redisClient))
 	authHandler.RegisterProtectedRoutes(protected)
 	pets.RegisterRoutes(protected, db)
+	profile.RegisterRoutes(protected, db)
 	social.RegisterRoutes(protected, db)
 	notifications.RegisterRoutes(protected, db)
 	safety.RegisterRoutes(protected, db)

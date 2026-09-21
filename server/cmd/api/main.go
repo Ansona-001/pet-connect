@@ -32,6 +32,7 @@ import (
 	"petconnect/server/internal/modules/media"
 	"petconnect/server/internal/modules/notifications"
 	"petconnect/server/internal/modules/pets"
+	"petconnect/server/internal/modules/profile"
 	"petconnect/server/internal/modules/safety"
 	"petconnect/server/internal/modules/social"
 	"petconnect/server/internal/platform/authjwt"
@@ -162,6 +163,7 @@ func run() error {
 	authHandler.RegisterProtectedRoutes(protected)
 	account.RegisterRoutes(protected, db, redisClient)
 	pets.RegisterRoutes(protected, db)
+	profile.RegisterRoutes(protected, db)
 	social.RegisterRoutes(protected, db)
 	discovery.RegisterRoutes(protected, db)
 	community.RegisterRoutes(protected, db)
