@@ -36,15 +36,22 @@ type Post struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
+// Comment follows ADR 0001's identity-attribution model: UserID is
+// always the authorization/audit anchor (never spoofable, never absent),
+// while ActorPetID is the optional *display* identity — when set,
+// AuthorName/AuthorPhotoURL already resolve to that pet's name/photo
+// server-side (see the COALESCE in handlers.go's queries) rather than
+// making every client re-derive "which identity to show."
 type Comment struct {
-	ID             uuid.UUID `json:"id"`
-	PostID         uuid.UUID `json:"post_id"`
-	UserID         uuid.UUID `json:"user_id"`
-	AuthorName     string    `json:"author_name"`
-	AuthorPhotoURL string    `json:"author_photo_url"`
-	Body           string    `json:"body"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID             uuid.UUID  `json:"id"`
+	PostID         uuid.UUID  `json:"post_id"`
+	UserID         uuid.UUID  `json:"user_id"`
+	ActorPetID     *uuid.UUID `json:"actor_pet_id,omitempty"`
+	AuthorName     string     `json:"author_name"`
+	AuthorPhotoURL string     `json:"author_photo_url"`
+	Body           string     `json:"body"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
 type Story struct {
@@ -77,7 +84,12 @@ type createStoryRequest struct {
 }
 
 type createCommentRequest struct {
-	Body string `json:"body"`
+	Body       string `json:"body"`
+	ActorPetID string `json:"actor_pet_id"`
+}
+
+type likeRequest struct {
+	ActorPetID string `json:"actor_pet_id"`
 }
 
 type postPage struct {

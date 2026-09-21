@@ -1,6 +1,7 @@
 package social
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/url"
@@ -322,8 +323,80 @@ func (h *Handler) postByID(c *fiber.Ctx, userID, postID uuid.UUID) (Post, error)
 	return item, err
 }
 
+// likePost has its own implementation rather than routing through
+// setPostRelation like every other post relation: a like is the one
+// action here ADR 0001 covers (alongside comments) — it can optionally
+// carry an actor_pet_id, which post_saves has no use for (saving is a
+// private bookmarking action with nothing to display an identity for).
 func (h *Handler) likePost(c *fiber.Ctx) error {
-	return h.setPostRelation(c, "post_likes", "liked", true)
+	userID, err := httpx.UserID(c)
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusUnauthorized, "authentication_required", "A valid access token is required.")
+	}
+	postID, err := httpx.UUIDParam(c, "postId")
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_post_id", "postId must be a valid UUID.")
+	}
+	visible, err := h.canViewPost(c, userID, postID)
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "post_query_failed", "The post could not be loaded.")
+	}
+	if !visible {
+		return httpx.Problem(c, fiber.StatusNotFound, "post_not_found", "The requested post was not found.")
+	}
+
+	var request likeRequest
+	// A PUT with no body is the common case (liking carries no
+	// attribution most of the time); BodyParser only errors on genuinely
+	// malformed JSON, not an absent/empty body, so this is safe to ignore.
+	_ = c.BodyParser(&request)
+	actorPetID, fieldErr, err := resolveOwnedActorPet(c.UserContext(), h.db, userID, request.ActorPetID)
+	if fieldErr != nil {
+		return httpx.Problem(c, fieldErr.status, fieldErr.field, fieldErr.message)
+	}
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "post_update_failed", "The post could not be updated.")
+	}
+
+	if _, err := h.db.Exec(c.UserContext(), `
+		INSERT INTO post_likes (user_id, post_id, actor_pet_id) VALUES ($1, $2, $3)
+		ON CONFLICT (user_id, post_id) DO UPDATE SET actor_pet_id = EXCLUDED.actor_pet_id`,
+		userID, postID, actorPetID); err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "post_update_failed", "The post could not be updated.")
+	}
+	return httpx.OK(c, fiber.Map{"liked": true})
+}
+
+// resolveOwnedActorPet parses an optional, client-supplied pet id and
+// confirms it belongs to userID — the concrete enforcement ADR 0001
+// requires of "a user may never act through a pet they do not own",
+// shared by likePost and createComment so both check it identically. An
+// empty rawPetID is valid and means "no pet attribution" (nil, nil, nil).
+func resolveOwnedActorPet(ctx context.Context, db *pgxpool.Pool, userID uuid.UUID, rawPetID string) (petID *uuid.UUID, fieldErr *actorPetError, err error) {
+	trimmed := strings.TrimSpace(rawPetID)
+	if trimmed == "" {
+		return nil, nil, nil
+	}
+	parsed, parseErr := uuid.Parse(trimmed)
+	if parseErr != nil {
+		return nil, &actorPetError{fiber.StatusBadRequest, "invalid_actor_pet_id", "actor_pet_id must be a valid UUID."}, nil
+	}
+	var owned bool
+	if err := db.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM pets WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL)`,
+		parsed, userID).Scan(&owned); err != nil {
+		return nil, nil, err
+	}
+	if !owned {
+		return nil, &actorPetError{fiber.StatusForbidden, "pet_not_owned", "The selected pet does not belong to the authenticated user."}, nil
+	}
+	return &parsed, nil, nil
+}
+
+type actorPetError struct {
+	status  int
+	field   string
+	message string
 }
 
 func (h *Handler) unlikePost(c *fiber.Ctx) error {
@@ -409,10 +482,12 @@ func (h *Handler) listComments(c *fiber.Ctx) error {
 	}
 
 	rows, err := h.db.Query(c.UserContext(), `
-		SELECT cm.id, cm.post_id, cm.user_id, u.name, u.profile_photo_url,
+		SELECT cm.id, cm.post_id, cm.user_id, cm.actor_pet_id,
+		       COALESCE(pet.name, u.name), COALESCE(pet.primary_image_url, u.profile_photo_url),
 		       cm.body, cm.created_at, cm.updated_at
 		FROM comments cm
 		JOIN users u ON u.id = cm.user_id
+		LEFT JOIN pets pet ON pet.id = cm.actor_pet_id AND pet.deleted_at IS NULL
 		WHERE cm.post_id = $1 AND cm.deleted_at IS NULL
 		  AND ($2::timestamptz IS NULL OR (cm.created_at, cm.id) < ($2::timestamptz, $3::uuid))
 		ORDER BY cm.created_at DESC, cm.id DESC
@@ -425,7 +500,7 @@ func (h *Handler) listComments(c *fiber.Ctx) error {
 	items := make([]Comment, 0, limit)
 	for rows.Next() {
 		var item Comment
-		if err := rows.Scan(&item.ID, &item.PostID, &item.UserID, &item.AuthorName, &item.AuthorPhotoURL, &item.Body, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.PostID, &item.UserID, &item.ActorPetID, &item.AuthorName, &item.AuthorPhotoURL, &item.Body, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return httpx.Problem(c, fiber.StatusInternalServerError, "comment_query_failed", "Comments could not be loaded.")
 		}
 		items = append(items, item)
@@ -466,18 +541,29 @@ func (h *Handler) createComment(c *fiber.Ctx) error {
 	if !visible {
 		return httpx.Problem(c, fiber.StatusNotFound, "post_not_found", "The requested post was not found.")
 	}
+	actorPetID, fieldErr, err := resolveOwnedActorPet(c.UserContext(), h.db, userID, request.ActorPetID)
+	if fieldErr != nil {
+		return httpx.Problem(c, fieldErr.status, fieldErr.field, fieldErr.message)
+	}
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "comment_create_failed", "The comment could not be created.")
+	}
 
 	var item Comment
 	err = h.db.QueryRow(c.UserContext(), `
 		WITH inserted AS (
-		  INSERT INTO comments (post_id, user_id, body)
-		  VALUES ($1, $2, $3)
-		  RETURNING id, post_id, user_id, body, created_at, updated_at
+		  INSERT INTO comments (post_id, user_id, body, actor_pet_id)
+		  VALUES ($1, $2, $3, $4)
+		  RETURNING id, post_id, user_id, actor_pet_id, body, created_at, updated_at
 		)
-		SELECT i.id, i.post_id, i.user_id, u.name, u.profile_photo_url,
+		SELECT i.id, i.post_id, i.user_id, i.actor_pet_id,
+		       COALESCE(pet.name, u.name), COALESCE(pet.primary_image_url, u.profile_photo_url),
 		       i.body, i.created_at, i.updated_at
-		FROM inserted i JOIN users u ON u.id = i.user_id`, postID, userID, request.Body).Scan(
-		&item.ID, &item.PostID, &item.UserID, &item.AuthorName, &item.AuthorPhotoURL,
+		FROM inserted i
+		JOIN users u ON u.id = i.user_id
+		LEFT JOIN pets pet ON pet.id = i.actor_pet_id AND pet.deleted_at IS NULL`,
+		postID, userID, request.Body, actorPetID).Scan(
+		&item.ID, &item.PostID, &item.UserID, &item.ActorPetID, &item.AuthorName, &item.AuthorPhotoURL,
 		&item.Body, &item.CreatedAt, &item.UpdatedAt,
 	)
 	if err != nil {
