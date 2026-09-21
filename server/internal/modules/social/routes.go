@@ -31,4 +31,9 @@ func RegisterRoutes(router fiber.Router, db *pgxpool.Pool) {
 	router.Get("/pets/:petId/posts", handler.listPetPosts)
 	router.Get("/pets/:petId/reels", handler.listPetReels)
 	router.Get("/pets/:petId/stories", handler.listPetStories)
+
+	// Follow/unfollow (brief Milestone 2) — idempotent in both directions,
+	// notifying the pet's owner only on the follow's actual creation.
+	router.Put("/pets/:petId/follow", handler.followPet)
+	router.Delete("/pets/:petId/follow", handler.unfollowPet)
 }

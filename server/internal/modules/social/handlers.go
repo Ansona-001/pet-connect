@@ -625,6 +625,77 @@ func (h *Handler) listPetStories(c *fiber.Ctx) error {
 	return httpx.OK(c, storyPage{Items: items, NextCursor: nextCursor})
 }
 
+func (h *Handler) followPet(c *fiber.Ctx) error {
+	return h.setFollow(c, true)
+}
+
+func (h *Handler) unfollowPet(c *fiber.Ctx) error {
+	return h.setFollow(c, false)
+}
+
+// setFollow toggles the caller's follow of a pet — brief Milestone 2's
+// "Follow/unfollow". Both directions are idempotent: following an
+// already-followed pet, or unfollowing one never followed, both succeed
+// as a no-op rather than erroring. Existence/access uses visibility.ForPet,
+// the same block-aware check the public profile and media tabs use, so a
+// blocked pet 404s here exactly as it does for GET /pets/:petId instead of
+// leaking block state through a differently-shaped follow error. The
+// insert and its notification share one transaction: without that, a
+// notification-insert failure after a committed follow-insert would be
+// unrecoverable — ON CONFLICT DO NOTHING makes a retried follow a silent
+// no-op, so the notification would never get a second chance to send.
+func (h *Handler) setFollow(c *fiber.Ctx, enabled bool) error {
+	userID, err := httpx.UserID(c)
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusUnauthorized, "authentication_required", "A valid access token is required.")
+	}
+	petID, err := httpx.UUIDParam(c, "petId")
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_pet_id", "pet id must be a valid UUID.")
+	}
+
+	access, err := visibility.ForPet(c.UserContext(), h.db, petID, userID)
+	if errors.Is(err, visibility.ErrNotFound) {
+		return httpx.Problem(c, fiber.StatusNotFound, "pet_not_found", "The pet was not found.")
+	}
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "follow_update_failed", "The follow could not be updated.")
+	}
+	if access.IsOwner {
+		return httpx.Problem(c, fiber.StatusBadRequest, "cannot_follow_own_pet", "You cannot follow your own pet.")
+	}
+
+	if !enabled {
+		if _, err := h.db.Exec(c.UserContext(), `DELETE FROM follows WHERE user_id = $1 AND pet_id = $2`, userID, petID); err != nil {
+			return httpx.Problem(c, fiber.StatusInternalServerError, "follow_update_failed", "The follow could not be updated.")
+		}
+		return httpx.OK(c, fiber.Map{"following": false})
+	}
+
+	tx, err := h.db.BeginTx(c.UserContext(), pgx.TxOptions{})
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "follow_update_failed", "The follow could not be updated.")
+	}
+	defer func() { _ = tx.Rollback(c.UserContext()) }()
+
+	tag, err := tx.Exec(c.UserContext(), `INSERT INTO follows (user_id, pet_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, userID, petID)
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "follow_update_failed", "The follow could not be updated.")
+	}
+	if tag.RowsAffected() > 0 {
+		if _, err := tx.Exec(c.UserContext(), `
+			INSERT INTO notifications (user_id, notification_type, payload)
+			VALUES ($1, 'follow', jsonb_build_object('pet_id', $2::text, 'follower_user_id', $3::text))`,
+			access.OwnerID, petID, userID); err != nil {
+			return httpx.Problem(c, fiber.StatusInternalServerError, "follow_update_failed", "The follow could not be updated.")
+		}
+	}
+	if err := tx.Commit(c.UserContext()); err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "follow_update_failed", "The follow could not be updated.")
+	}
+	return httpx.OK(c, fiber.Map{"following": true})
+}
+
 func (h *Handler) createStory(c *fiber.Ctx) error {
 	userID, err := httpx.UserID(c)
 	if err != nil {
