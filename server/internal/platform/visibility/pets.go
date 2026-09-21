@@ -17,14 +17,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// ErrNotFound means the pet doesn't exist, is soft-deleted/inactive to
-// this viewer, or — indistinguishably, on purpose — its owner and the
-// viewer have blocked each other. A block's existence must not be
-// detectable from response shape (the same enumeration-safety reasoning
-// as auth's generic errors and profile.go's block handling), so callers
-// should respond identically (404) whether the pet never existed or a
-// block is hiding it.
-var ErrNotFound = errors.New("pet not visible to this viewer")
+// ErrNotFound means the pet or user doesn't exist, is soft-deleted/
+// inactive to this viewer, or — indistinguishably, on purpose — the
+// target and the viewer have blocked each other. A block's existence
+// must not be detectable from response shape (the same enumeration-safety
+// reasoning as auth's generic errors), so callers should respond
+// identically (404) whether the target never existed or a block is
+// hiding it. Shared by both ForPet and ForUser below.
+var ErrNotFound = errors.New("target not visible to this viewer")
 
 // PetAccess is what a viewer may see about petID.
 type PetAccess struct {
