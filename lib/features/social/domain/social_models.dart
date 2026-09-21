@@ -74,6 +74,8 @@ class PetStory {
 class FeedPost {
   const FeedPost({
     required this.id,
+    this.petId = '',
+    this.authorUserId = '',
     required this.petName,
     required this.ownerHandle,
     required this.location,
@@ -85,9 +87,16 @@ class FeedPost {
     required this.comments,
     this.isLiked = false,
     this.isSaved = false,
+    this.isFollowedByMe = false,
   });
 
   final String id;
+  // petId/authorUserId default to '' for the mock/demo data path
+  // (SocialController without a repository) — following requires a real
+  // pet id, so the follow button is simply hidden there (see
+  // ReelsScreen), not something demo data needs to fake.
+  final String petId;
+  final String authorUserId;
   final String petName;
   final String ownerHandle;
   final String location;
@@ -99,10 +108,19 @@ class FeedPost {
   final int comments;
   final bool isLiked;
   final bool isSaved;
+  final bool isFollowedByMe;
 
-  FeedPost copyWith({int? likes, int? comments, bool? isLiked, bool? isSaved}) {
+  FeedPost copyWith({
+    int? likes,
+    int? comments,
+    bool? isLiked,
+    bool? isSaved,
+    bool? isFollowedByMe,
+  }) {
     return FeedPost(
       id: id,
+      petId: petId,
+      authorUserId: authorUserId,
       petName: petName,
       ownerHandle: ownerHandle,
       location: location,
@@ -114,6 +132,7 @@ class FeedPost {
       comments: comments ?? this.comments,
       isLiked: isLiked ?? this.isLiked,
       isSaved: isSaved ?? this.isSaved,
+      isFollowedByMe: isFollowedByMe ?? this.isFollowedByMe,
     );
   }
 }

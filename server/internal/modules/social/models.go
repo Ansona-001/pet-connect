@@ -32,6 +32,7 @@ type Post struct {
 	CommentCount int64     `json:"comment_count"`
 	LikedByMe    bool      `json:"liked_by_me"`
 	SavedByMe    bool      `json:"saved_by_me"`
+	FollowedByMe bool      `json:"followed_by_me"`
 	CreatedAt    time.Time `json:"created_at"`
 }
 

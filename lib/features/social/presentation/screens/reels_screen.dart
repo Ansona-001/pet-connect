@@ -8,6 +8,7 @@ import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_text_styles.dart';
 import '../../../../shared/widgets/app_image.dart';
+import '../../../auth/application/auth_controller.dart';
 import '../../application/social_controller.dart';
 import '../../domain/social_models.dart';
 
@@ -19,8 +20,6 @@ class ReelsScreen extends ConsumerStatefulWidget {
 }
 
 class _ReelsScreenState extends ConsumerState<ReelsScreen> {
-  final Set<String> _followedHandles = <String>{};
-
   int _activeIndex = 0;
   bool _isMuted = true;
   bool _isPaused = false;
@@ -60,18 +59,20 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
     setState(() => _heartPostId = null);
   }
 
-  void _toggleFollow(FeedPost post) {
-    setState(() {
-      if (!_followedHandles.add(post.ownerHandle)) {
-        _followedHandles.remove(post.ownerHandle);
-      }
-    });
-    final isFollowing = _followedHandles.contains(post.ownerHandle);
+  Future<void> _toggleFollow(FeedPost post) async {
+    final wasFollowing = post.isFollowedByMe;
+    await ref.read(socialControllerProvider.notifier).toggleFollow(post);
+    if (!mounted) return;
+    final error = ref.read(socialControllerProvider).error;
+    if (error != null) {
+      _showFeedback(error, icon: Icons.error_outline_rounded);
+      return;
+    }
     _showFeedback(
-      isFollowing
-          ? 'Following ${post.ownerHandle}.'
-          : 'Unfollowed ${post.ownerHandle}.',
-      icon: isFollowing ? Icons.person_add_alt_1 : Icons.person_remove_alt_1,
+      wasFollowing
+          ? 'Unfollowed ${post.ownerHandle}.'
+          : 'Following ${post.ownerHandle}.',
+      icon: wasFollowing ? Icons.person_remove_alt_1 : Icons.person_add_alt_1,
     );
   }
 
@@ -103,6 +104,7 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
     final posts = ref.watch(
       socialControllerProvider.select((state) => state.posts),
     );
+    final currentUserId = ref.watch(authControllerProvider).user?.id;
 
     return Scaffold(
       backgroundColor: AppColors.black,
@@ -140,7 +142,10 @@ class _ReelsScreenState extends ConsumerState<ReelsScreen> {
                       totalReels: posts.length,
                       isLiked: post.isLiked,
                       isSaved: post.isSaved,
-                      isFollowing: _followedHandles.contains(post.ownerHandle),
+                      isFollowing: post.isFollowedByMe,
+                      showFollow:
+                          post.petId.isNotEmpty &&
+                          post.authorUserId != currentUserId,
                       isMuted: _isMuted,
                       isPaused: isActive && _isPaused,
                       showHeart: _heartPostId == post.id,
@@ -262,6 +267,7 @@ class _ReelPage extends StatelessWidget {
     required this.isLiked,
     required this.isSaved,
     required this.isFollowing,
+    required this.showFollow,
     required this.isMuted,
     required this.isPaused,
     required this.showHeart,
@@ -282,6 +288,7 @@ class _ReelPage extends StatelessWidget {
   final bool isLiked;
   final bool isSaved;
   final bool isFollowing;
+  final bool showFollow;
   final bool isMuted;
   final bool isPaused;
   final bool showHeart;
@@ -405,6 +412,7 @@ class _ReelPage extends StatelessWidget {
             child: _ReelDetails(
               post: post,
               isFollowing: isFollowing,
+              showFollow: showFollow,
               onFollow: onFollow,
             ),
           ),
@@ -449,11 +457,13 @@ class _ReelDetails extends StatelessWidget {
   const _ReelDetails({
     required this.post,
     required this.isFollowing,
+    required this.showFollow,
     required this.onFollow,
   });
 
   final FeedPost post;
   final bool isFollowing;
+  final bool showFollow;
   final VoidCallback onFollow;
 
   @override
@@ -502,33 +512,35 @@ class _ReelDetails extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(width: AppSpacing.sm),
-            SizedBox(
-              height: AppSpacing.xxxl,
-              child: isFollowing
-                  ? TextButton(
-                      onPressed: onFollow,
-                      style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: AppSpacing.sm,
+            if (showFollow) ...[
+              const SizedBox(width: AppSpacing.sm),
+              SizedBox(
+                height: AppSpacing.xxxl,
+                child: isFollowing
+                    ? TextButton(
+                        onPressed: onFollow,
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: AppSpacing.sm,
+                          ),
+                          foregroundColor: AppColors.textSecondary,
                         ),
-                        foregroundColor: AppColors.textSecondary,
-                      ),
-                      child: const Text('Following'),
-                    )
-                  : OutlinedButton(
-                      onPressed: onFollow,
-                      style: OutlinedButton.styleFrom(
-                        minimumSize: Size.zero,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: AppSpacing.md,
+                        child: const Text('Following'),
+                      )
+                    : OutlinedButton(
+                        onPressed: onFollow,
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: Size.zero,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: AppSpacing.md,
+                          ),
+                          foregroundColor: AppColors.white,
+                          side: const BorderSide(color: AppColors.white),
                         ),
-                        foregroundColor: AppColors.white,
-                        side: const BorderSide(color: AppColors.white),
+                        child: const Text('Follow'),
                       ),
-                      child: const Text('Follow'),
-                    ),
-            ),
+              ),
+            ],
           ],
         ),
         const SizedBox(height: AppSpacing.md),

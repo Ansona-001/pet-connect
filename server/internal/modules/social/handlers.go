@@ -56,6 +56,7 @@ func (h *Handler) listPostsByKind(c *fiber.Ctx, kind string) error {
 		       (SELECT count(*) FROM comments cm WHERE cm.post_id = p.id AND cm.deleted_at IS NULL),
 		       EXISTS (SELECT 1 FROM post_likes pl WHERE pl.post_id = p.id AND pl.user_id = $1),
 		       EXISTS (SELECT 1 FROM post_saves ps WHERE ps.post_id = p.id AND ps.user_id = $1),
+		       EXISTS (SELECT 1 FROM follows f WHERE f.user_id = $1 AND f.pet_id = p.pet_id),
 		       p.created_at
 		FROM posts p
 		JOIN pets pet ON pet.id = p.pet_id
@@ -98,7 +99,7 @@ func (h *Handler) listPostsByKind(c *fiber.Ctx, kind string) error {
 			&item.AuthorUserID, &item.AuthorName, &item.Kind, &item.Caption,
 			&item.LocationName, &item.MediaURL, &item.MediaType, &item.Visibility,
 			&item.LikeCount, &item.CommentCount, &item.LikedByMe, &item.SavedByMe,
-			&item.CreatedAt,
+			&item.FollowedByMe, &item.CreatedAt,
 		); err != nil {
 			return httpx.Problem(c, fiber.StatusInternalServerError, "social_query_failed", "The social feed could not be loaded.")
 		}
@@ -178,6 +179,7 @@ func (h *Handler) listPetPostsByKind(c *fiber.Ctx, kind string) error {
 		       (SELECT count(*) FROM comments cm WHERE cm.post_id = p.id AND cm.deleted_at IS NULL),
 		       EXISTS (SELECT 1 FROM post_likes pl WHERE pl.post_id = p.id AND pl.user_id = $1),
 		       EXISTS (SELECT 1 FROM post_saves ps WHERE ps.post_id = p.id AND ps.user_id = $1),
+		       EXISTS (SELECT 1 FROM follows f WHERE f.user_id = $1 AND f.pet_id = p.pet_id),
 		       p.created_at
 		FROM posts p
 		JOIN pets pet ON pet.id = p.pet_id
@@ -206,7 +208,7 @@ func (h *Handler) listPetPostsByKind(c *fiber.Ctx, kind string) error {
 			&item.AuthorUserID, &item.AuthorName, &item.Kind, &item.Caption,
 			&item.LocationName, &item.MediaURL, &item.MediaType, &item.Visibility,
 			&item.LikeCount, &item.CommentCount, &item.LikedByMe, &item.SavedByMe,
-			&item.CreatedAt,
+			&item.FollowedByMe, &item.CreatedAt,
 		); err != nil {
 			return httpx.Problem(c, fiber.StatusInternalServerError, "social_query_failed", "The pet's media could not be loaded.")
 		}

@@ -92,6 +92,13 @@ class SocialRepository {
   Future<void> setPostSaved(String postId, bool value) =>
       _toggle('/posts/$postId/save', value);
 
+  /// Follows/unfollows the pet behind a post — see
+  /// server/internal/modules/social/handlers.go's `setFollow`. Both
+  /// directions are idempotent server-side, so a duplicate tap (e.g. a
+  /// fast double-tap before the first request resolves) is harmless.
+  Future<void> setPetFollowed(String petId, bool value) =>
+      _toggle('/pets/$petId/follow', value);
+
   Future<FeedPost> createImagePost({
     required String petId,
     required String caption,
@@ -279,6 +286,8 @@ class SocialRepository {
 
   FeedPost _postFromJson(Map<String, dynamic> json) => FeedPost(
     id: json['id']?.toString() ?? '',
+    petId: json['pet_id']?.toString() ?? '',
+    authorUserId: json['author_user_id']?.toString() ?? '',
     petName: json['pet_name']?.toString() ?? 'Pet',
     ownerHandle: json['author_name']?.toString() ?? '',
     location: json['location_name']?.toString() ?? '',
@@ -290,6 +299,7 @@ class SocialRepository {
     comments: (json['comment_count'] as num?)?.toInt() ?? 0,
     isLiked: json['liked_by_me'] == true,
     isSaved: json['saved_by_me'] == true,
+    isFollowedByMe: json['followed_by_me'] == true,
   );
 
   PetStory _storyFromJson(Map<String, dynamic> json) => PetStory(

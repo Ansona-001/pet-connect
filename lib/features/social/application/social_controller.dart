@@ -225,6 +225,38 @@ class SocialController extends StateNotifier<SocialState> {
     }
   }
 
+  /// Follows/unfollows the pet behind [post] — see
+  /// server/internal/modules/social/handlers.go's `setFollow`. Following
+  /// is pet-scoped, not post-scoped, so every post from that same pet
+  /// currently in [SocialState.posts] flips together, not just the one
+  /// the user tapped from.
+  Future<void> toggleFollow(FeedPost post) async {
+    if (post.petId.isEmpty) return;
+    final nextValue = !post.isFollowedByMe;
+    final originals = state.posts.where((item) => item.petId == post.petId);
+    _setFollowedForPet(post.petId, nextValue);
+    try {
+      await _repository?.setPetFollowed(post.petId, nextValue);
+    } catch (error) {
+      for (final original in originals) {
+        _replacePost(original);
+      }
+      state = state.copyWith(error: ApiException.from(error).message);
+    }
+  }
+
+  void _setFollowedForPet(String petId, bool isFollowedByMe) {
+    state = state.copyWith(
+      posts: state.posts
+          .map(
+            (post) => post.petId == petId
+                ? post.copyWith(isFollowedByMe: isFollowedByMe)
+                : post,
+          )
+          .toList(growable: false),
+    );
+  }
+
   Future<bool> createImagePost({
     required String caption,
     required String fileName,
