@@ -114,12 +114,17 @@ class _MatchScreenState extends ConsumerState<MatchScreen> {
     }
   }
 
-  void _showFilters() {
-    showModalBottomSheet<void>(
+  Future<void> _showFilters() async {
+    final currentRadius = ref.read(socialControllerProvider).matchRadiusKm;
+    final radiusKm = await showModalBottomSheet<double>(
       context: context,
       showDragHandle: true,
-      builder: (sheetContext) => const _DiscoveryFiltersSheet(),
+      builder: (sheetContext) =>
+          _DiscoveryFiltersSheet(initialDistanceKm: currentRadius),
     );
+    if (radiusKm != null && mounted) {
+      ref.read(socialControllerProvider.notifier).setMatchRadiusKm(radiusKm);
+    }
   }
 
   Future<void> _showSuperLike() async {
@@ -219,6 +224,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen> {
                   children: [
                     _MatchHeader(
                       city: socialState.userProfile.city,
+                      radiusKm: socialState.matchRadiusKm,
                       onFilterTap: _showFilters,
                     ),
                     const SizedBox(height: AppSpacing.lg),
@@ -350,9 +356,14 @@ class _DeckComplete extends StatelessWidget {
 }
 
 class _MatchHeader extends StatelessWidget {
-  const _MatchHeader({required this.city, required this.onFilterTap});
+  const _MatchHeader({
+    required this.city,
+    required this.radiusKm,
+    required this.onFilterTap,
+  });
 
   final String city;
+  final double radiusKm;
   final VoidCallback onFilterTap;
 
   @override
@@ -375,7 +386,7 @@ class _MatchHeader extends StatelessWidget {
                   const SizedBox(width: AppSpacing.xs),
                   Expanded(
                     child: Text(
-                      '$city  •  within 10 km',
+                      '$city  •  within ${radiusKm.round()} km',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: AppTextStyles.bodySmall,
@@ -870,14 +881,16 @@ class _MatchAvatar extends StatelessWidget {
 }
 
 class _DiscoveryFiltersSheet extends StatefulWidget {
-  const _DiscoveryFiltersSheet();
+  const _DiscoveryFiltersSheet({required this.initialDistanceKm});
+
+  final double initialDistanceKm;
 
   @override
   State<_DiscoveryFiltersSheet> createState() => _DiscoveryFiltersSheetState();
 }
 
 class _DiscoveryFiltersSheetState extends State<_DiscoveryFiltersSheet> {
-  double _distance = 10;
+  late double _distance = widget.initialDistanceKm.clamp(2, 50);
   String _petType = 'Dogs';
 
   @override
@@ -940,7 +953,7 @@ class _DiscoveryFiltersSheetState extends State<_DiscoveryFiltersSheet> {
             SizedBox(
               width: double.infinity,
               child: FilledButton(
-                onPressed: () => Navigator.of(context).pop(),
+                onPressed: () => Navigator.of(context).pop(_distance),
                 child: const Text('Apply filters'),
               ),
             ),

@@ -22,6 +22,8 @@ class SocialState {
     required this.activePetIndex,
     required this.readChatIds,
     required this.superLikedPetIds,
+    required this.profileStats,
+    this.matchRadiusKm = 10,
     this.lastMatch,
     this.lastMatchChatId,
     this.isLoading = false,
@@ -61,6 +63,14 @@ class SocialState {
     activePetIndex: 0,
     readChatIds: const <String>{},
     superLikedPetIds: const <String>{},
+    profileStats: useMocks
+        ? const ProfileStats(
+            postCount: 128,
+            followerCount: 12800,
+            followingCount: 486,
+            petCount: 2,
+          )
+        : const ProfileStats.zero(),
     initialized: useMocks,
   );
 
@@ -75,6 +85,8 @@ class SocialState {
   final int activePetIndex;
   final Set<String> readChatIds;
   final Set<String> superLikedPetIds;
+  final ProfileStats profileStats;
+  final double matchRadiusKm;
   final PetProfile? lastMatch;
   final String? lastMatchChatId;
   final bool isLoading;
@@ -97,6 +109,8 @@ class SocialState {
     int? activePetIndex,
     Set<String>? readChatIds,
     Set<String>? superLikedPetIds,
+    ProfileStats? profileStats,
+    double? matchRadiusKm,
     PetProfile? lastMatch,
     String? lastMatchChatId,
     bool clearLastMatch = false,
@@ -125,6 +139,8 @@ class SocialState {
       superLikedPetIds: Set<String>.unmodifiable(
         superLikedPetIds ?? this.superLikedPetIds,
       ),
+      profileStats: profileStats ?? this.profileStats,
+      matchRadiusKm: matchRadiusKm ?? this.matchRadiusKm,
       lastMatch: clearLastMatch ? null : lastMatch ?? this.lastMatch,
       lastMatchChatId: clearLastMatch
           ? null
@@ -140,6 +156,7 @@ class SocialController extends StateNotifier<SocialState> {
   SocialController({
     SocialRepository? repository,
     this.realtime,
+    this.currentUserId,
     UserSetupProfile? initialProfile,
   }) : _repository = repository,
        super(SocialState.initial(useMocks: repository == null)) {
@@ -150,8 +167,24 @@ class SocialController extends StateNotifier<SocialState> {
 
   final SocialRepository? _repository;
   final RealtimeClient? realtime;
+  final String? currentUserId;
   StreamSubscription<RealtimeEvent>? _realtimeSubscription;
   int _messageSequence = 0;
+
+  /// Fetches the real Posts/Followers/Following/Pets counts for
+  /// [currentUserId] — see server/internal/modules/profile/profile.go's
+  /// `getPublicProfile`. Failures here fall back to the previous counts
+  /// rather than raising, so a stats hiccup never blocks feed/pets/chat
+  /// loading (which is what [initialize] is really for).
+  Future<ProfileStats> _fetchProfileStats(SocialRepository repository) async {
+    final userId = currentUserId;
+    if (userId == null || userId.isEmpty) return state.profileStats;
+    try {
+      return await repository.fetchProfileStats(userId);
+    } catch (_) {
+      return state.profileStats;
+    }
+  }
 
   Future<void> initialize({bool force = false}) async {
     final repository = _repository;
@@ -162,7 +195,7 @@ class SocialController extends StateNotifier<SocialState> {
     }
     state = state.copyWith(isLoading: true, clearError: true);
     try {
-      final snapshot = await repository.load();
+      final snapshot = await repository.load(radiusKm: state.matchRadiusKm);
       final primaryPet = snapshot.pets.isEmpty ? null : snapshot.pets.first;
       final profile = primaryPet == null
           ? state.userProfile
@@ -173,6 +206,7 @@ class SocialController extends StateNotifier<SocialState> {
               petType: primaryPet.petType,
               interests: primaryPet.interests,
             );
+      final profileStats = await _fetchProfileStats(repository);
       state = state.copyWith(
         posts: snapshot.posts,
         stories: snapshot.stories,
@@ -181,6 +215,7 @@ class SocialController extends StateNotifier<SocialState> {
         chats: snapshot.chats,
         candidateIndex: 0,
         userProfile: profile,
+        profileStats: profileStats,
         isLoading: false,
         initialized: true,
         clearError: true,
@@ -351,7 +386,12 @@ class SocialController extends StateNotifier<SocialState> {
       final clampedIndex = pets.isEmpty
           ? 0
           : state.activePetIndex.clamp(0, pets.length - 1);
-      state = state.copyWith(pets: pets, activePetIndex: clampedIndex);
+      final profileStats = await _fetchProfileStats(repository);
+      state = state.copyWith(
+        pets: pets,
+        activePetIndex: clampedIndex,
+        profileStats: profileStats,
+      );
     } catch (error) {
       state = state.copyWith(error: ApiException.from(error).message);
     }
@@ -427,6 +467,21 @@ class SocialController extends StateNotifier<SocialState> {
       state = state.copyWith(candidateIndex: 0, clearLastMatch: true);
     } else {
       initialize(force: true);
+    }
+  }
+
+  /// Applies a new discovery radius from `_DiscoveryFiltersSheet` — see
+  /// server/internal/modules/matching/handler.go's `max_distance_km` query
+  /// param (0 means unbounded there, so this UI never lets the slider go
+  /// below its 2km floor to avoid accidentally re-introducing that). A
+  /// full re-`initialize` is used rather than a narrower candidates-only
+  /// fetch to match [resetMatchDeck]'s existing "force full reload"
+  /// pattern for any filter/deck change.
+  Future<void> setMatchRadiusKm(double radiusKm) async {
+    if (radiusKm == state.matchRadiusKm) return;
+    state = state.copyWith(matchRadiusKm: radiusKm, candidateIndex: 0);
+    if (_repository != null) {
+      await initialize(force: true);
     }
   }
 
@@ -527,6 +582,7 @@ final socialControllerProvider =
       return SocialController(
         repository: ref.watch(socialRepositoryProvider),
         realtime: ref.watch(realtimeClientProvider),
+        currentUserId: user?.id,
         initialProfile: user == null
             ? null
             : UserSetupProfile(

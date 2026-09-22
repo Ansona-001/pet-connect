@@ -137,6 +137,29 @@ class FeedPost {
   }
 }
 
+/// The counts shown on a profile's stats row — see
+/// server/internal/modules/profile/profile.go's `getPublicProfile`, which
+/// returns these same four numbers for `GET /users/:userId`.
+class ProfileStats {
+  const ProfileStats({
+    required this.postCount,
+    required this.followerCount,
+    required this.followingCount,
+    required this.petCount,
+  });
+
+  const ProfileStats.zero()
+    : postCount = 0,
+      followerCount = 0,
+      followingCount = 0,
+      petCount = 0;
+
+  final int postCount;
+  final int followerCount;
+  final int followingCount;
+  final int petCount;
+}
+
 class ChatPreview {
   const ChatPreview({
     required this.id,

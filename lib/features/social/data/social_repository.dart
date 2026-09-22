@@ -39,7 +39,7 @@ class SocialRepository {
   String? _currentUserId;
   static const _uuid = Uuid();
 
-  Future<SocialSnapshot> load() async {
+  Future<SocialSnapshot> load({double radiusKm = 10}) async {
     try {
       final petsResponse = await _api.dio.get<Map<String, dynamic>>('/me/pets');
       final petRows = _list(_rawData(petsResponse));
@@ -52,7 +52,11 @@ class SocialRepository {
         _api.dio.get('/feed'),
         _api.dio.get('/stories'),
         _api.dio.get('/chats'),
-        if (sourcePetId != null) _api.dio.get('/pets/$sourcePetId/candidates'),
+        if (sourcePetId != null)
+          _api.dio.get(
+            '/pets/$sourcePetId/candidates',
+            queryParameters: {'max_distance_km': radiusKm},
+          ),
       ]);
       final posts = _items(responses[0]).map(_postFromJson).toList();
       final stories = _items(responses[1]).map(_storyFromJson).toList();
@@ -81,6 +85,29 @@ class SocialRepository {
     try {
       final response = await _api.dio.get<Map<String, dynamic>>('/me/pets');
       return _list(_rawData(response)).map(_petFromJson).toList();
+    } catch (error) {
+      throw ApiException.from(error);
+    }
+  }
+
+  /// Fetches the real Posts/Followers/Following/Pets counts for the
+  /// signed-in user's own profile — see
+  /// server/internal/modules/profile/profile.go's `getPublicProfile`.
+  /// Requesting your own userId always gets these fields populated
+  /// (`IsSelf` bypasses the private-account reduction), so no fallback
+  /// handling for a restricted response is needed here.
+  Future<ProfileStats> fetchProfileStats(String userId) async {
+    try {
+      final response = await _api.dio.get<Map<String, dynamic>>(
+        '/users/$userId',
+      );
+      final json = _data(response);
+      return ProfileStats(
+        postCount: (json['post_count'] as num?)?.toInt() ?? 0,
+        followerCount: (json['follower_count'] as num?)?.toInt() ?? 0,
+        followingCount: (json['following_count'] as num?)?.toInt() ?? 0,
+        petCount: (json['pet_count'] as num?)?.toInt() ?? 0,
+      );
     } catch (error) {
       throw ApiException.from(error);
     }

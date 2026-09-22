@@ -14,6 +14,7 @@ import '../../../../shared/widgets/layout/app_scaffold.dart';
 import '../../../auth/application/auth_controller.dart';
 import '../../application/social_controller.dart';
 import '../../data/mock_social_data.dart';
+import '../../domain/social_models.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
   const ProfileScreen({super.key});
@@ -178,7 +179,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       onShare: () => _shareProfile(petName),
                     ),
                     const SizedBox(height: AppSpacing.xxl),
-                    const _ProfileStats(),
+                    _ProfileStats(stats: socialState.profileStats),
                     const SizedBox(height: AppSpacing.xxl),
                     _AboutSection(petName: petName, interests: setup.interests),
                     const SizedBox(height: AppSpacing.xxl),
@@ -460,7 +461,19 @@ class _ProfileButtons extends StatelessWidget {
 }
 
 class _ProfileStats extends StatelessWidget {
-  const _ProfileStats();
+  const _ProfileStats({required this.stats});
+
+  final ProfileStats stats;
+
+  static String _formatCount(int value) {
+    if (value >= 1000000) {
+      return '${(value / 1000000).toStringAsFixed(1)}M';
+    }
+    if (value >= 1000) {
+      return '${(value / 1000).toStringAsFixed(1)}K';
+    }
+    return value.toString();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -474,22 +487,28 @@ class _ProfileStats extends StatelessWidget {
         borderRadius: AppRadius.lg,
         border: Border.all(color: AppColors.border),
       ),
-      child: const Row(
+      child: Row(
         children: [
           Expanded(
-            child: _Stat(value: '128', label: 'Posts'),
+            child: _Stat(value: _formatCount(stats.postCount), label: 'Posts'),
           ),
-          _StatDivider(),
+          const _StatDivider(),
           Expanded(
-            child: _Stat(value: '12.8K', label: 'Followers'),
+            child: _Stat(
+              value: _formatCount(stats.followerCount),
+              label: 'Followers',
+            ),
           ),
-          _StatDivider(),
+          const _StatDivider(),
           Expanded(
-            child: _Stat(value: '486', label: 'Following'),
+            child: _Stat(
+              value: _formatCount(stats.followingCount),
+              label: 'Following',
+            ),
           ),
-          _StatDivider(),
+          const _StatDivider(),
           Expanded(
-            child: _Stat(value: '2', label: 'Pets'),
+            child: _Stat(value: _formatCount(stats.petCount), label: 'Pets'),
           ),
         ],
       ),
