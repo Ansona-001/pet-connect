@@ -165,6 +165,11 @@ func (h *Handler) nearbyPets(c *fiber.Ctx) error {
 		    AND (NOT owner.is_private OR EXISTS (
 		      SELECT 1 FROM follows f WHERE f.user_id = $1 AND f.pet_id = p.id
 		    ))
+		    -- The location-specific discovery-participation opt-out
+		    -- (migrations/000006_location_discovery_participation.sql) —
+		    -- distinct from is_private above, this has no follow-based
+		    -- exception: opting out of discovery means opting out.
+		    AND owner.is_discoverable
 		    AND ST_DWithin(p.location, origin.location, $5::double precision)
 		    AND ($6 = '' OR lower(p.pet_type) = $6)
 		    AND ($7 = '' OR p.breed ILIKE '%' || $7 || '%')

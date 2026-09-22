@@ -177,6 +177,7 @@ type userResponse struct {
 	City                string     `json:"city"`
 	ProfilePhotoURL     string     `json:"profile_photo_url"`
 	IsPrivate           bool       `json:"is_private"`
+	IsDiscoverable      bool       `json:"is_discoverable"`
 	OnboardingCompleted bool       `json:"onboarding_completed"`
 	CreatedAt           time.Time  `json:"created_at"`
 	UpdatedAt           time.Time  `json:"updated_at"`
@@ -223,10 +224,10 @@ func (h *Handler) register(c *fiber.Ctx) error {
 		INSERT INTO users (email, password_hash, name)
 		VALUES ($1, crypt($2, gen_salt('bf', 12)), $3)
 		RETURNING id, email::text, name, bio, city, profile_photo_url,
-		          is_private, onboarding_completed_at IS NOT NULL, created_at, updated_at,
+		          is_private, is_discoverable, onboarding_completed_at IS NOT NULL, created_at, updated_at,
 		          onboarding_completed_at`, input.Email, input.Password, input.Name).Scan(
 		&user.ID, &user.Email, &user.Name, &user.Bio, &user.City,
-		&user.ProfilePhotoURL, &user.IsPrivate, &user.OnboardingCompleted, &user.CreatedAt,
+		&user.ProfilePhotoURL, &user.IsPrivate, &user.IsDiscoverable, &user.OnboardingCompleted, &user.CreatedAt,
 		&user.UpdatedAt, &user.OnboardedAt,
 	)
 	if err != nil {
@@ -530,14 +531,14 @@ func findUserByCredentials(ctx context.Context, tx pgx.Tx, email, password strin
 	var user userResponse
 	err := tx.QueryRow(ctx, `
 		SELECT id, email::text, name, bio, city, profile_photo_url,
-		       is_private, onboarding_completed_at IS NOT NULL, created_at, updated_at,
+		       is_private, is_discoverable, onboarding_completed_at IS NOT NULL, created_at, updated_at,
 		       onboarding_completed_at
 		FROM users
 		WHERE email = $1
 		  AND password_hash = crypt($2, password_hash)
 		  AND deleted_at IS NULL`, email, password).Scan(
 		&user.ID, &user.Email, &user.Name, &user.Bio, &user.City,
-		&user.ProfilePhotoURL, &user.IsPrivate, &user.OnboardingCompleted, &user.CreatedAt,
+		&user.ProfilePhotoURL, &user.IsPrivate, &user.IsDiscoverable, &user.OnboardingCompleted, &user.CreatedAt,
 		&user.UpdatedAt, &user.OnboardedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {

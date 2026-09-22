@@ -139,6 +139,7 @@ class AuthController extends StateNotifier<AuthState> {
     required String bio,
     required String city,
     required bool isPrivate,
+    required bool isDiscoverable,
   }) async {
     state = state.copyWith(isLoading: true, clearError: true);
     try {
@@ -147,6 +148,7 @@ class AuthController extends StateNotifier<AuthState> {
         bio: bio,
         city: city,
         isPrivate: isPrivate,
+        isDiscoverable: isDiscoverable,
       );
       state = AuthState(initialized: true, user: user);
       return true;

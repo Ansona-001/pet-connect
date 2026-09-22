@@ -56,6 +56,7 @@ type user struct {
 	ProfilePhotoURL       string     `json:"profile_photo_url"`
 	Location              *location  `json:"location,omitempty"`
 	IsPrivate             bool       `json:"is_private"`
+	IsDiscoverable        bool       `json:"is_discoverable"`
 	OnboardingCompleted   bool       `json:"onboarding_completed"`
 	OnboardingCompletedAt *time.Time `json:"onboarding_completed_at,omitempty"`
 	CreatedAt             time.Time  `json:"created_at"`
@@ -63,14 +64,20 @@ type user struct {
 }
 
 type patchRequest struct {
-	Name               *string   `json:"name"`
-	Bio                *string   `json:"bio"`
-	City               *string   `json:"city"`
-	ProfilePhotoURL    *string   `json:"profile_photo_url"`
-	Location           *location `json:"location"`
-	ClearLocation      bool      `json:"clear_location"`
-	IsPrivate          *bool     `json:"is_private"`
-	CompleteOnboarding bool      `json:"complete_onboarding"`
+	Name            *string   `json:"name"`
+	Bio             *string   `json:"bio"`
+	City            *string   `json:"city"`
+	ProfilePhotoURL *string   `json:"profile_photo_url"`
+	Location        *location `json:"location"`
+	ClearLocation   bool      `json:"clear_location"`
+	IsPrivate       *bool     `json:"is_private"`
+	// IsDiscoverable is the location-specific "discovery participation"
+	// preference (migrations/000006_location_discovery_participation.sql)
+	// — distinct from IsPrivate's general "restrict my profile to people
+	// I've connected with" axis, this governs only whether the owner's
+	// pets are surfaced through location-based discovery/matching at all.
+	IsDiscoverable     *bool `json:"is_discoverable"`
+	CompleteOnboarding bool  `json:"complete_onboarding"`
 }
 
 func (h *Handler) getMe(c *fiber.Ctx) error {
@@ -131,15 +138,16 @@ func (h *Handler) patchMe(c *fiber.Ctx) error {
 		      WHEN $10::boolean THEN COALESCE(onboarding_completed_at, now())
 		      ELSE onboarding_completed_at
 		    END,
-		    is_private = COALESCE($11, is_private)
+		    is_private = COALESCE($11, is_private),
+		    is_discoverable = COALESCE($12, is_discoverable)
 		WHERE id = $1 AND deleted_at IS NULL
 		RETURNING id, email::text, name, bio, city, profile_photo_url,
 		          ST_Y(location::geometry), ST_X(location::geometry),
 		          onboarding_completed_at IS NOT NULL, onboarding_completed_at,
-		          created_at, updated_at, is_private`,
+		          created_at, updated_at, is_private, is_discoverable`,
 		userID, input.Name, input.Bio, input.City, input.ProfilePhotoURL,
 		setLocation, latitude, longitude, input.ClearLocation, input.CompleteOnboarding,
-		input.IsPrivate)
+		input.IsPrivate, input.IsDiscoverable)
 
 	result, err := scanUser(row)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -160,7 +168,7 @@ func loadUser(c *fiber.Ctx, db *pgxpool.Pool, userID uuid.UUID) (user, error) {
 		SELECT id, email::text, name, bio, city, profile_photo_url,
 		       ST_Y(location::geometry), ST_X(location::geometry),
 		       onboarding_completed_at IS NOT NULL, onboarding_completed_at,
-		       created_at, updated_at, is_private
+		       created_at, updated_at, is_private, is_discoverable
 		FROM users
 		WHERE id = $1 AND deleted_at IS NULL`, userID))
 }
@@ -172,7 +180,7 @@ func scanUser(row rowScanner) (user, error) {
 		&result.ID, &result.Email, &result.Name, &result.Bio, &result.City,
 		&result.ProfilePhotoURL, &latitude, &longitude,
 		&result.OnboardingCompleted, &result.OnboardingCompletedAt,
-		&result.CreatedAt, &result.UpdatedAt, &result.IsPrivate,
+		&result.CreatedAt, &result.UpdatedAt, &result.IsPrivate, &result.IsDiscoverable,
 	)
 	if err != nil {
 		return user{}, err
@@ -193,7 +201,7 @@ func (e *fieldError) Error() string { return e.message }
 func hasPatch(input patchRequest) bool {
 	return input.Name != nil || input.Bio != nil || input.City != nil ||
 		input.ProfilePhotoURL != nil || input.Location != nil || input.ClearLocation ||
-		input.IsPrivate != nil || input.CompleteOnboarding
+		input.IsPrivate != nil || input.IsDiscoverable != nil || input.CompleteOnboarding
 }
 
 func normalizeAndValidate(input *patchRequest) *fieldError {

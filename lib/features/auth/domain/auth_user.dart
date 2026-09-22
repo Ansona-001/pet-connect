@@ -8,6 +8,7 @@ class AuthUser {
     required this.profilePhotoUrl,
     required this.onboardingCompleted,
     this.isPrivate = false,
+    this.isDiscoverable = true,
   });
 
   final String id;
@@ -20,10 +21,16 @@ class AuthUser {
 
   /// Whether the owner has restricted their profile/pets to people they've
   /// connected with — see server/internal/modules/account/account.go's
-  /// `is_private` field. Enforcement of what "restricted" means across
-  /// each read path is separate, later work; this flag today only reflects
-  /// the owner's stated preference.
+  /// `is_private` field, enforced across profile/feed/discovery/matching
+  /// queries via internal/platform/visibility.
   final bool isPrivate;
+
+  /// Whether the owner wants to appear in location-based discovery and
+  /// matching at all — a separate, location-specific axis from
+  /// [isPrivate] (see `is_discoverable`, migrations/000006_location_
+  /// discovery_participation.sql). Defaults to true (participating),
+  /// unlike [isPrivate]'s false default.
+  final bool isDiscoverable;
 
   factory AuthUser.fromJson(Map<String, dynamic> json) => AuthUser(
     id: json['id']?.toString() ?? '',
@@ -34,5 +41,6 @@ class AuthUser {
     profilePhotoUrl: json['profile_photo_url']?.toString() ?? '',
     onboardingCompleted: json['onboarding_completed'] == true,
     isPrivate: json['is_private'] == true,
+    isDiscoverable: json['is_discoverable'] != false,
   );
 }

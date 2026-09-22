@@ -91,13 +91,14 @@ class AuthRepository {
   /// Updates the owner's own profile fields — see
   /// server/internal/modules/account/account.go's PATCH /me. Only the
   /// fields a real edit-profile form exposes today (name, bio, city,
-  /// privacy preference); other PATCH-able fields (photo, location) are
-  /// untouched by this call.
+  /// privacy preference, discovery participation); other PATCH-able
+  /// fields (photo, location) are untouched by this call.
   Future<AuthUser> updateProfile({
     required String name,
     required String bio,
     required String city,
     required bool isPrivate,
+    required bool isDiscoverable,
   }) async {
     try {
       final response = await _api.dio.patch<Map<String, dynamic>>(
@@ -107,6 +108,7 @@ class AuthRepository {
           'bio': bio.trim(),
           'city': city.trim(),
           'is_private': isPrivate,
+          'is_discoverable': isDiscoverable,
         },
       );
       return AuthUser.fromJson(_data(response));

@@ -67,6 +67,10 @@ func (s *Service) Candidates(ctx context.Context, userID, sourcePetID uuid.UUID,
 		  -- relationship that could earn an exception here, so a private
 		  -- account's pets are excluded from matching outright.
 		  AND NOT owner.is_private
+		  -- Same location-specific discovery-participation opt-out as
+		  -- internal/modules/discovery's nearbyPets — see
+		  -- migrations/000006_location_discovery_participation.sql.
+		  AND owner.is_discoverable
 		  AND ($3 = '' OR lower(target.pet_type) = lower($3))
 		  AND ($4 = '' OR lower(target.breed) = lower($4))
 		  AND ($5 = '' OR lower(target.gender) = lower($5))

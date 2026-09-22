@@ -1,0 +1,16 @@
+-- Adds the location-specific "discovery participation" preference that
+-- migrations/000003_profile_privacy.sql's is_private column deliberately
+-- deferred to its own later pass (see that migration's comment): whether
+-- the owner wants to appear in location-based discovery/matching at all,
+-- distinct from is_private's general "restrict my profile to people I've
+-- connected with" axis. ADR 0002 (docs/adr/0002-location-privacy.md)
+-- already governs *what* others ever see of a location (rounded distance
+-- or city text, never exact coordinates); this column governs *whether*
+-- the owner is surfaced through location-based discovery at all.
+--
+-- Defaults to true (participating), unlike is_private's false default —
+-- an existing user should not silently vanish from discovery/matching
+-- the moment this column appears; opting out is a deliberate action the
+-- new settings toggle lets them take afterward. Additive-only per ADR
+-- 0006 (docs/adr/0006-migration-strategy.md).
+ALTER TABLE users ADD COLUMN is_discoverable boolean NOT NULL DEFAULT true;

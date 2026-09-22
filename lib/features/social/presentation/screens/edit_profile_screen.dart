@@ -27,6 +27,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
   late final TextEditingController _bioController;
   late final TextEditingController _cityController;
   late bool _isPrivate;
+  late bool _isDiscoverable;
   bool _saving = false;
   String? _error;
 
@@ -38,6 +39,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
     _bioController = TextEditingController(text: user?.bio ?? '');
     _cityController = TextEditingController(text: user?.city ?? '');
     _isPrivate = user?.isPrivate ?? false;
+    _isDiscoverable = user?.isDiscoverable ?? true;
     _nameController.addListener(() => setState(() {}));
   }
 
@@ -63,6 +65,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
           bio: _bioController.text,
           city: _cityController.text,
           isPrivate: _isPrivate,
+          isDiscoverable: _isDiscoverable,
         );
     if (!mounted) return;
     if (success) {
@@ -158,6 +161,28 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                     subtitle: const Text(
                       'Only people you follow or match with can see your '
                       'full profile and pet details.',
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.lg,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.lg),
+                Container(
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: AppRadius.lg,
+                    border: Border.all(color: AppColors.border),
+                  ),
+                  child: SwitchListTile.adaptive(
+                    value: _isDiscoverable,
+                    onChanged: (value) =>
+                        setState(() => _isDiscoverable = value),
+                    title: const Text('Show me in discovery'),
+                    subtitle: const Text(
+                      'Lets nearby pet parents find you through location-based '
+                      'discovery and matching. Turning this off hides your '
+                      'pets from both, even for people you already follow.',
                     ),
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: AppSpacing.lg,

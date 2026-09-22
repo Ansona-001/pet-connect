@@ -35,6 +35,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	"petconnect/server/internal/modules/account"
 	"petconnect/server/internal/modules/auth"
 	"petconnect/server/internal/modules/chat"
 	"petconnect/server/internal/modules/discovery"
@@ -90,6 +91,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 	authHandler := auth.RegisterRoutes(v1, db, tokens, 720*time.Hour, mailer.LogSender{}, redisClient, auth.GoogleOAuthConfig{}, auth.AppleOAuthConfig{})
 	protected := v1.Group("", httpx.Authenticate(tokens, redisClient))
 	authHandler.RegisterProtectedRoutes(protected)
+	account.RegisterRoutes(protected, db, redisClient)
 	pets.RegisterRoutes(protected, db)
 	profile.RegisterRoutes(protected, db)
 	social.RegisterRoutes(protected, db)
