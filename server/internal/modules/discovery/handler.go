@@ -159,6 +159,12 @@ func (h *Handler) nearbyPets(c *fiber.Ctx) error {
 		      WHERE (bl.blocker_user_id = $1 AND bl.blocked_user_id = p.owner_id)
 		         OR (bl.blocker_user_id = p.owner_id AND bl.blocked_user_id = $1)
 		    )
+		    -- A private account's pets are only discoverable to someone
+		    -- already following that specific pet — see
+		    -- internal/platform/visibility.ForPet's identical exception.
+		    AND (NOT owner.is_private OR EXISTS (
+		      SELECT 1 FROM follows f WHERE f.user_id = $1 AND f.pet_id = p.id
+		    ))
 		    AND ST_DWithin(p.location, origin.location, $5::double precision)
 		    AND ($6 = '' OR lower(p.pet_type) = $6)
 		    AND ($7 = '' OR p.breed ILIKE '%' || $7 || '%')

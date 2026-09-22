@@ -439,14 +439,27 @@ func (h *Handler) setPostRelation(c *fiber.Ctx, table, responseField string, ena
 	return httpx.OK(c, fiber.Map{responseField: enabled})
 }
 
+// canViewPost is the shared gate for likePost/unlikePost/savePost/
+// unsavePost/listComments/createComment — it must enforce everything the
+// main feed query (listPostsByKind) does, since a post reachable there
+// must not become un-interactable-with here and vice versa: the pet's
+// own deleted/status check (a soft-deleted/paused pet's posts otherwise
+// stay likeable/commentable forever, since pet deletion doesn't cascade
+// to posts) and the bidirectional blocks check.
 func (h *Handler) canViewPost(c *fiber.Ctx, userID, postID uuid.UUID) (bool, error) {
 	var visible bool
 	err := h.db.QueryRow(c.UserContext(), `
 		SELECT EXISTS (
 		  SELECT 1 FROM posts p
+		  JOIN pets pet ON pet.id = p.pet_id AND pet.deleted_at IS NULL AND pet.status = 'active'
 		  WHERE p.id = $2 AND p.deleted_at IS NULL
 		    AND (p.visibility = 'public' OR p.author_user_id = $1
 		      OR EXISTS (SELECT 1 FROM follows f WHERE f.user_id = $1 AND f.pet_id = p.pet_id))
+		    AND NOT EXISTS (
+		      SELECT 1 FROM blocks bl
+		      WHERE (bl.blocker_user_id = $1 AND bl.blocked_user_id = p.author_user_id)
+		         OR (bl.blocker_user_id = p.author_user_id AND bl.blocked_user_id = $1)
+		    )
 		)`, userID, postID).Scan(&visible)
 	return visible, err
 }
@@ -601,7 +614,14 @@ func (h *Handler) listStories(c *fiber.Ctx) error {
 		  AND p.deleted_at IS NULL AND p.status = 'active'
 		  AND (s.author_user_id = $1 OR EXISTS (
 		    SELECT 1 FROM follows f WHERE f.user_id = $1 AND f.pet_id = s.pet_id
-		  ) OR NOT EXISTS (SELECT 1 FROM follows WHERE user_id = $1))
+		  ))
+		  -- Blocking is enforced both directions — see listPostsByKind's
+		  -- identical clause and reasoning.
+		  AND NOT EXISTS (
+		    SELECT 1 FROM blocks bl
+		    WHERE (bl.blocker_user_id = $1 AND bl.blocked_user_id = s.author_user_id)
+		       OR (bl.blocker_user_id = s.author_user_id AND bl.blocked_user_id = $1)
+		  )
 		  AND ($2::timestamptz IS NULL OR (s.created_at, s.id) < ($2::timestamptz, $3::uuid))
 		ORDER BY s.created_at DESC, s.id DESC
 		LIMIT $4`, userID, cursorTime, cursorID, limit+1)

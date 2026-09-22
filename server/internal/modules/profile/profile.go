@@ -91,11 +91,14 @@ func (h *Handler) getPublicProfile(c *fiber.Ctx) error {
 		       (SELECT count(*) FROM pets p
 		          WHERE p.owner_id = u.id AND p.deleted_at IS NULL AND p.status = 'active'),
 		       (SELECT count(*) FROM posts po
+		          JOIN pets pt ON pt.id = po.pet_id AND pt.deleted_at IS NULL AND pt.status = 'active'
 		          WHERE po.author_user_id = u.id AND po.kind = 'post' AND po.deleted_at IS NULL),
 		       (SELECT count(DISTINCT f.user_id) FROM follows f
 		          JOIN pets fp ON fp.id = f.pet_id
 		          WHERE fp.owner_id = u.id AND fp.deleted_at IS NULL AND fp.status = 'active'),
-		       (SELECT count(*) FROM follows f WHERE f.user_id = u.id)
+		       (SELECT count(*) FROM follows f
+		          JOIN pets p ON p.id = f.pet_id
+		          WHERE f.user_id = u.id AND p.deleted_at IS NULL AND p.status = 'active')
 		FROM users u
 		WHERE u.id = $1 AND u.deleted_at IS NULL
 		  AND NOT EXISTS (

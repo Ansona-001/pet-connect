@@ -62,6 +62,11 @@ func (s *Service) Candidates(ctx context.Context, userID, sourcePetID uuid.UUID,
 		  AND target.owner_id <> $2
 		  AND target.deleted_at IS NULL
 		  AND target.status = 'active'
+		  -- A swipe candidate is by definition a stranger — unlike
+		  -- discovery/profile visits there's no established "following"
+		  -- relationship that could earn an exception here, so a private
+		  -- account's pets are excluded from matching outright.
+		  AND NOT owner.is_private
 		  AND ($3 = '' OR lower(target.pet_type) = lower($3))
 		  AND ($4 = '' OR lower(target.breed) = lower($4))
 		  AND ($5 = '' OR lower(target.gender) = lower($5))
