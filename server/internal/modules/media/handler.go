@@ -105,6 +105,8 @@ func (h *Handler) upload(c *fiber.Ctx) error {
 	}
 
 	var width, height *int
+	uploadReader := io.Reader(file)
+	uploadSize := fileHeader.Size
 	if mediaType == "image" {
 		config, decodeErr := decodeImageConfig(contentType, file)
 		if decodeErr != nil {
@@ -113,14 +115,31 @@ func (h *Handler) upload(c *fiber.Ctx) error {
 		if config.Width > maxImageDimension || config.Height > maxImageDimension {
 			return httpx.Problem(c, fiber.StatusUnprocessableEntity, "image_too_large", fmt.Sprintf("Images must not exceed %d pixels in either dimension.", maxImageDimension))
 		}
-		width, height = &config.Width, &config.Height
 		if _, err := file.Seek(0, io.SeekStart); err != nil {
 			return httpx.Problem(c, fiber.StatusBadRequest, "invalid_file", "The uploaded file could not be read.")
 		}
+
+		// Re-encoding — not just validating — every image upload is what
+		// actually strips EXIF/ICC/XMP metadata (including the GPS tags
+		// ADR 0002 cares about): see process.go's processImage doc
+		// comment for why a decode/re-encode round-trip is the mechanism,
+		// and why WebP normalizes to JPEG in the process.
+		processed, processErr := processImage(contentType, file)
+		if processErr != nil {
+			return httpx.Problem(c, fiber.StatusUnprocessableEntity, "invalid_image", "The image could not be processed.")
+		}
+		if int64(len(processed.data)) > h.maxUploadBytes {
+			return httpx.Problem(c, fiber.StatusUnprocessableEntity, "image_too_large", "The processed image exceeds the maximum allowed size.")
+		}
+		contentType = processed.contentType
+		extension = processed.extension
+		uploadReader = bytes.NewReader(processed.data)
+		uploadSize = int64(len(processed.data))
+		width, height = &processed.width, &processed.height
 	}
 
 	key := fmt.Sprintf("uploads/%s/%s%s", userID, uuid.NewString(), extension)
-	if err := h.store.Put(c.UserContext(), key, contentType, fileHeader.Size, file); err != nil {
+	if err := h.store.Put(c.UserContext(), key, contentType, uploadSize, uploadReader); err != nil {
 		return httpx.Problem(c, fiber.StatusInternalServerError, "upload_failed", "The media upload failed. Please retry.")
 	}
 
@@ -134,7 +153,7 @@ func (h *Handler) upload(c *fiber.Ctx) error {
 		INSERT INTO media (owner_user_id, media_type, storage_path, content_type, byte_size, width, height)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING id`,
-		userID, mediaType, key, contentType, fileHeader.Size, width, height,
+		userID, mediaType, key, contentType, uploadSize, width, height,
 	).Scan(&mediaID); err != nil {
 		return httpx.Problem(c, fiber.StatusInternalServerError, "upload_failed", "The media upload failed. Please retry.")
 	}
@@ -146,7 +165,7 @@ func (h *Handler) upload(c *fiber.Ctx) error {
 		"path":         path,
 		"media_type":   mediaType,
 		"content_type": contentType,
-		"size":         fileHeader.Size,
+		"size":         uploadSize,
 		"width":        width,
 		"height":       height,
 	})
