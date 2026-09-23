@@ -176,7 +176,7 @@ func run() error {
 	matching.RegisterRoutes(protected, matchingService)
 	chatService := chat.NewService(db, hub)
 	chat.RegisterRoutes(protected, chatService)
-	media.New(mediaStore, cfg.PublicBaseURL, cfg.MaxUploadBytes).Register(protected, app)
+	media.New(mediaStore, db, cfg.PublicBaseURL, cfg.MaxUploadBytes).Register(protected, app)
 	realtimeServer.RegisterTicketRoute(protected)
 
 	serverErrors := make(chan error, 1)
