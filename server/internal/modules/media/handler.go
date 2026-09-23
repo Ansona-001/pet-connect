@@ -7,7 +7,6 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
-	"mime"
 	"path/filepath"
 	"strings"
 
@@ -185,28 +184,34 @@ func (h *Handler) download(c *fiber.Ctx) error {
 	return c.SendStream(object, int(info.Size))
 }
 
+// acceptedMedia looks up both the media type and file extension from a
+// fixed table of our own, rather than deriving the extension via
+// mime.ExtensionsByType — that function consults the host OS's mime
+// database (e.g. /etc/mime.types on Linux, the registry on Windows) in
+// addition to Go's own small built-in table, so its result is
+// platform-dependent: a Content-Type this table always accepts (like
+// audio/webm) can come back with zero registered extensions on a host
+// whose mime database happens not to list it, silently rejecting an
+// otherwise-valid upload. This was caught by CI running on a different
+// OS than local development.
 func acceptedMedia(contentType string) (extension string, mediaType string, ok bool) {
-	allowed := map[string]string{
-		"image/jpeg":      "image",
-		"image/png":       "image",
-		"image/webp":      "image",
-		"video/mp4":       "video",
-		"video/webm":      "video",
-		"video/quicktime": "video",
-		"audio/mpeg":      "audio",
-		"audio/mp4":       "audio",
-		"audio/webm":      "audio",
-		"audio/ogg":       "audio",
+	allowed := map[string]struct{ mediaType, extension string }{
+		"image/jpeg":      {"image", ".jpg"},
+		"image/png":       {"image", ".png"},
+		"image/webp":      {"image", ".webp"},
+		"video/mp4":       {"video", ".mp4"},
+		"video/webm":      {"video", ".webm"},
+		"video/quicktime": {"video", ".mov"},
+		"audio/mpeg":      {"audio", ".mp3"},
+		"audio/mp4":       {"audio", ".m4a"},
+		"audio/webm":      {"audio", ".weba"},
+		"audio/ogg":       {"audio", ".ogg"},
 	}
-	mediaType, ok = allowed[contentType]
+	entry, ok := allowed[contentType]
 	if !ok {
 		return "", "", false
 	}
-	extensions, _ := mime.ExtensionsByType(contentType)
-	if len(extensions) == 0 {
-		return "", "", false
-	}
-	return extensions[0], mediaType, true
+	return entry.extension, entry.mediaType, true
 }
 
 // sniffMatches confirms header — the file's own leading bytes — actually
