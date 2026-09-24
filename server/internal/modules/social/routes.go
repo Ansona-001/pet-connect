@@ -12,6 +12,8 @@ func RegisterRoutes(router fiber.Router, db *pgxpool.Pool) {
 
 	router.Get("/feed", handler.listFeed)
 	router.Post("/posts", handler.createPost)
+	router.Patch("/posts/:postId", handler.patchPost)
+	router.Delete("/posts/:postId", handler.deletePost)
 	router.Put("/posts/:postId/like", handler.likePost)
 	router.Delete("/posts/:postId/like", handler.unlikePost)
 	router.Put("/posts/:postId/save", handler.savePost)

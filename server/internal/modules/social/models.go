@@ -13,6 +13,10 @@ import (
 const (
 	defaultPageSize = 20
 	maximumPageSize = 50
+	// maxCarouselItems caps how many media items a single post can
+	// carry — generous enough for any real use, small enough to bound
+	// the ordered-insert transaction and the feed payload size.
+	maxCarouselItems = 10
 )
 
 type Post struct {
@@ -34,6 +38,22 @@ type Post struct {
 	SavedByMe    bool      `json:"saved_by_me"`
 	FollowedByMe bool      `json:"followed_by_me"`
 	CreatedAt    time.Time `json:"created_at"`
+	// Media is the ordered carousel (migrations/000007_durable_media_
+	// schema.sql's post_media), populated only for posts created or
+	// edited with media_ids. MediaURL/MediaType above always mirror the
+	// carousel's first item when one exists, so a client that has never
+	// heard of carousels still renders something reasonable — Media is
+	// additive, never a replacement those two fields need updating for.
+	Media []PostMedia `json:"media,omitempty"`
+}
+
+// PostMedia is one ordered item of a post's carousel — see Post.Media.
+type PostMedia struct {
+	ID        uuid.UUID `json:"id"`
+	MediaURL  string    `json:"media_url"`
+	MediaType string    `json:"media_type"`
+	Width     *int      `json:"width,omitempty"`
+	Height    *int      `json:"height,omitempty"`
 }
 
 // Comment follows ADR 0001's identity-attribution model: UserID is
@@ -74,6 +94,19 @@ type createPostRequest struct {
 	MediaURL     string `json:"media_url"`
 	MediaType    string `json:"media_type"`
 	Visibility   string `json:"visibility"`
+	// MediaIDs, when present, is an ordered carousel of previously
+	// uploaded media/handler.go media rows (each must belong to the
+	// caller) — brief Milestone 3's "Carousel post API". Omit it (or
+	// leave it empty) to use the legacy single MediaURL/MediaType path
+	// unchanged. Reels never accept it — a reel is always one video.
+	MediaIDs []string `json:"media_ids"`
+}
+
+type patchPostRequest struct {
+	Caption      *string   `json:"caption"`
+	LocationName *string   `json:"location_name"`
+	Visibility   *string   `json:"visibility"`
+	MediaIDs     *[]string `json:"media_ids"`
 }
 
 type createStoryRequest struct {

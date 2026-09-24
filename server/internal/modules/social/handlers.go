@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
 	"strings"
 	"unicode/utf8"
@@ -116,6 +117,9 @@ func (h *Handler) listPostsByKind(c *fiber.Ctx, kind string) error {
 		last := items[len(items)-1]
 		nextCursor = encodeTimeCursor(last.CreatedAt, last.ID)
 	}
+	if err := attachMedia(c.UserContext(), h.db, items); err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "social_query_failed", "The social feed could not be loaded.")
+	}
 	return httpx.OK(c, postPage{Items: items, NextCursor: nextCursor})
 }
 
@@ -225,6 +229,9 @@ func (h *Handler) listPetPostsByKind(c *fiber.Ctx, kind string) error {
 		last := items[len(items)-1]
 		nextCursor = encodeTimeCursor(last.CreatedAt, last.ID)
 	}
+	if err := attachMedia(c.UserContext(), h.db, items); err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "social_query_failed", "The pet's media could not be loaded.")
+	}
 	return httpx.OK(c, postPage{Items: items, NextCursor: nextCursor})
 }
 
@@ -266,37 +273,266 @@ func (h *Handler) createPostByKind(c *fiber.Ctx, kind string) error {
 	if utf8.RuneCountInString(request.LocationName) > 200 {
 		return httpx.Problem(c, fiber.StatusBadRequest, "location_too_long", "location_name must contain at most 200 characters.")
 	}
-	if !validMediaURL(request.MediaURL) {
-		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_media_url", "media_url must be an HTTP(S) URL or an application-relative media path.")
-	}
-	if request.MediaType != "image" && request.MediaType != "video" {
-		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_media_type", "media_type must be image or video.")
-	}
-	if kind == "reel" && request.MediaType != "video" {
-		return httpx.Problem(c, fiber.StatusBadRequest, "reel_requires_video", "A reel must use video media.")
+	// media_url/media_type are the legacy single-media path — irrelevant
+	// (and left unvalidated) when media_ids supplies a carousel instead;
+	// resolveCarousel below derives both from the carousel's first item.
+	if len(request.MediaIDs) == 0 {
+		if !validMediaURL(request.MediaURL) {
+			return httpx.Problem(c, fiber.StatusBadRequest, "invalid_media_url", "media_url must be an HTTP(S) URL or an application-relative media path.")
+		}
+		if request.MediaType != "image" && request.MediaType != "video" {
+			return httpx.Problem(c, fiber.StatusBadRequest, "invalid_media_type", "media_type must be image or video.")
+		}
+		if kind == "reel" && request.MediaType != "video" {
+			return httpx.Problem(c, fiber.StatusBadRequest, "reel_requires_video", "A reel must use video media.")
+		}
 	}
 	if request.Visibility != "public" && request.Visibility != "followers" {
 		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_visibility", "visibility must be public or followers.")
 	}
+	if kind == "reel" && len(request.MediaIDs) > 0 {
+		return httpx.Problem(c, fiber.StatusBadRequest, "reel_no_carousel", "A reel must use a single video, not a media_ids carousel.")
+	}
+	carousel, fieldErr, err := resolveCarousel(c.UserContext(), h.db, userID, request.MediaIDs)
+	if fieldErr != nil {
+		return httpx.Problem(c, fieldErr.status, fieldErr.field, fieldErr.message)
+	}
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "post_create_failed", "The post could not be created.")
+	}
+	mediaURL, mediaType := request.MediaURL, request.MediaType
+	if carousel != nil {
+		mediaURL, mediaType = carousel[0].MediaURL, carousel[0].MediaType
+	}
+
+	tx, err := h.db.Begin(c.UserContext())
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "post_create_failed", "The post could not be created.")
+	}
+	defer func() { _ = tx.Rollback(c.UserContext()) }()
 
 	var postID uuid.UUID
-	err = h.db.QueryRow(c.UserContext(), `
+	err = tx.QueryRow(c.UserContext(), `
 		INSERT INTO posts (pet_id, author_user_id, kind, caption, location_name, media_url, media_type, visibility)
 		SELECT p.id, $1, $3, $4, $5, $6, $7, $8
 		FROM pets p
 		WHERE p.id = $2 AND p.owner_id = $1 AND p.deleted_at IS NULL AND p.status <> 'deleted'
-		RETURNING id`, userID, petID, kind, request.Caption, request.LocationName, request.MediaURL, request.MediaType, request.Visibility).Scan(&postID)
+		RETURNING id`, userID, petID, kind, request.Caption, request.LocationName, mediaURL, mediaType, request.Visibility).Scan(&postID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return httpx.Problem(c, fiber.StatusForbidden, "pet_not_owned", "The selected pet does not belong to the authenticated user.")
 	}
 	if err != nil {
 		return httpx.Problem(c, fiber.StatusInternalServerError, "post_create_failed", "The post could not be created.")
 	}
+	if err := insertPostMedia(c.UserContext(), tx, postID, carousel); err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "post_create_failed", "The post could not be created.")
+	}
+	if err := tx.Commit(c.UserContext()); err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "post_create_failed", "The post could not be created.")
+	}
+
 	post, err := h.postByID(c, userID, postID)
 	if err != nil {
 		return httpx.Problem(c, fiber.StatusInternalServerError, "post_create_failed", "The post was created but could not be loaded.")
 	}
 	return httpx.Created(c, post)
+}
+
+// resolveCarousel validates a create/edit request's optional media_ids
+// into an ordered []PostMedia (nil, nil, nil when rawIDs is empty,
+// meaning "use the legacy single-media path unchanged"). Every id must
+// parse as a UUID, belong to the caller, and not be soft-deleted — a
+// post can never carry someone else's media, or media the uploader has
+// since deleted.
+func resolveCarousel(ctx context.Context, db *pgxpool.Pool, userID uuid.UUID, rawIDs []string) ([]PostMedia, *actorPetError, error) {
+	if len(rawIDs) == 0 {
+		return nil, nil, nil
+	}
+	if len(rawIDs) > maxCarouselItems {
+		return nil, &actorPetError{fiber.StatusBadRequest, "too_many_media_items", fmt.Sprintf("A post may include at most %d media items.", maxCarouselItems)}, nil
+	}
+	ids := make([]uuid.UUID, len(rawIDs))
+	for i, raw := range rawIDs {
+		parsed, err := uuid.Parse(strings.TrimSpace(raw))
+		if err != nil {
+			return nil, &actorPetError{fiber.StatusBadRequest, "invalid_media_id", "Every media_ids entry must be a valid UUID."}, nil
+		}
+		ids[i] = parsed
+	}
+
+	rows, err := db.Query(ctx, `
+		SELECT id, media_type, storage_path, width, height
+		FROM media
+		WHERE id = ANY($1) AND owner_user_id = $2 AND deleted_at IS NULL`, ids, userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	found := make(map[uuid.UUID]PostMedia, len(ids))
+	for rows.Next() {
+		var (
+			id              uuid.UUID
+			mediaType, path string
+			width, height   *int
+		)
+		if err := rows.Scan(&id, &mediaType, &path, &width, &height); err != nil {
+			return nil, nil, err
+		}
+		found[id] = PostMedia{ID: id, MediaURL: "/media/" + path, MediaType: mediaType, Width: width, Height: height}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	carousel := make([]PostMedia, len(ids))
+	for i, id := range ids {
+		item, ok := found[id]
+		if !ok {
+			return nil, &actorPetError{fiber.StatusForbidden, "media_not_owned", "One or more media_ids do not belong to the authenticated user."}, nil
+		}
+		carousel[i] = item
+	}
+	return carousel, nil, nil
+}
+
+// insertPostMedia writes carousel's ordered post_media rows for postID.
+// A nil carousel (the legacy single-media path) is a no-op.
+func insertPostMedia(ctx context.Context, tx pgx.Tx, postID uuid.UUID, carousel []PostMedia) error {
+	for position, item := range carousel {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO post_media (post_id, media_id, position) VALUES ($1, $2, $3)`,
+			postID, item.ID, position); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// patchPost edits caption/location_name/visibility and/or replaces the
+// carousel outright (media_ids, when supplied, must be the post's
+// complete new media list — there's no add/remove-one-item operation).
+// Author-only, matching every other post-scoped mutation in this file.
+func (h *Handler) patchPost(c *fiber.Ctx) error {
+	userID, err := httpx.UserID(c)
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusUnauthorized, "authentication_required", "A valid access token is required.")
+	}
+	postID, err := httpx.UUIDParam(c, "postId")
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_post_id", "postId must be a valid UUID.")
+	}
+	var request patchPostRequest
+	if err := c.BodyParser(&request); err != nil {
+		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_json", "The request body must be valid JSON.")
+	}
+	if request.Caption == nil && request.LocationName == nil && request.Visibility == nil && request.MediaIDs == nil {
+		return httpx.Problem(c, fiber.StatusBadRequest, "empty_patch", "Supply at least one field to update.")
+	}
+	if request.Caption != nil {
+		trimmed := strings.TrimSpace(*request.Caption)
+		if utf8.RuneCountInString(trimmed) > 2200 {
+			return httpx.Problem(c, fiber.StatusBadRequest, "caption_too_long", "caption must contain at most 2200 characters.")
+		}
+		request.Caption = &trimmed
+	}
+	if request.LocationName != nil {
+		trimmed := strings.TrimSpace(*request.LocationName)
+		if utf8.RuneCountInString(trimmed) > 200 {
+			return httpx.Problem(c, fiber.StatusBadRequest, "location_too_long", "location_name must contain at most 200 characters.")
+		}
+		request.LocationName = &trimmed
+	}
+	if request.Visibility != nil {
+		trimmed := strings.ToLower(strings.TrimSpace(*request.Visibility))
+		if trimmed != "public" && trimmed != "followers" {
+			return httpx.Problem(c, fiber.StatusBadRequest, "invalid_visibility", "visibility must be public or followers.")
+		}
+		request.Visibility = &trimmed
+	}
+
+	var carousel []PostMedia
+	if request.MediaIDs != nil {
+		if len(*request.MediaIDs) == 0 {
+			return httpx.Problem(c, fiber.StatusBadRequest, "empty_media_ids", "media_ids cannot be empty; omit the field entirely to leave media unchanged.")
+		}
+		var fieldErr *actorPetError
+		carousel, fieldErr, err = resolveCarousel(c.UserContext(), h.db, userID, *request.MediaIDs)
+		if fieldErr != nil {
+			return httpx.Problem(c, fieldErr.status, fieldErr.field, fieldErr.message)
+		}
+		if err != nil {
+			return httpx.Problem(c, fiber.StatusInternalServerError, "post_update_failed", "The post could not be updated.")
+		}
+	}
+
+	tx, err := h.db.Begin(c.UserContext())
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "post_update_failed", "The post could not be updated.")
+	}
+	defer func() { _ = tx.Rollback(c.UserContext()) }()
+
+	var mediaURL, mediaType any
+	if carousel != nil {
+		mediaURL, mediaType = carousel[0].MediaURL, carousel[0].MediaType
+	}
+	command, err := tx.Exec(c.UserContext(), `
+		UPDATE posts
+		SET caption = COALESCE($3, caption),
+		    location_name = COALESCE($4, location_name),
+		    visibility = COALESCE($5, visibility),
+		    media_url = COALESCE($6, media_url),
+		    media_type = COALESCE($7, media_type)
+		WHERE id = $1 AND author_user_id = $2 AND deleted_at IS NULL`,
+		postID, userID, request.Caption, request.LocationName, request.Visibility, mediaURL, mediaType)
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "post_update_failed", "The post could not be updated.")
+	}
+	if command.RowsAffected() == 0 {
+		return httpx.Problem(c, fiber.StatusNotFound, "post_not_found", "The requested post was not found.")
+	}
+	if request.MediaIDs != nil {
+		if _, err := tx.Exec(c.UserContext(), `DELETE FROM post_media WHERE post_id = $1`, postID); err != nil {
+			return httpx.Problem(c, fiber.StatusInternalServerError, "post_update_failed", "The post could not be updated.")
+		}
+		if err := insertPostMedia(c.UserContext(), tx, postID, carousel); err != nil {
+			return httpx.Problem(c, fiber.StatusInternalServerError, "post_update_failed", "The post could not be updated.")
+		}
+	}
+	if err := tx.Commit(c.UserContext()); err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "post_update_failed", "The post could not be updated.")
+	}
+
+	post, err := h.postByID(c, userID, postID)
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "post_update_failed", "The post was updated but could not be loaded.")
+	}
+	return httpx.OK(c, post)
+}
+
+// deletePost soft-deletes — post_media rows are left in place (harmless:
+// the post's own deleted_at already hides it everywhere) rather than
+// cleaned up here, consistent with pets.go's own soft-delete, which
+// likewise leaves dependent rows for other cleanup to reconcile later.
+func (h *Handler) deletePost(c *fiber.Ctx) error {
+	userID, err := httpx.UserID(c)
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusUnauthorized, "authentication_required", "A valid access token is required.")
+	}
+	postID, err := httpx.UUIDParam(c, "postId")
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusBadRequest, "invalid_post_id", "postId must be a valid UUID.")
+	}
+	command, err := h.db.Exec(c.UserContext(), `
+		UPDATE posts SET deleted_at = now()
+		WHERE id = $1 AND author_user_id = $2 AND deleted_at IS NULL`, postID, userID)
+	if err != nil {
+		return httpx.Problem(c, fiber.StatusInternalServerError, "post_delete_failed", "The post could not be deleted.")
+	}
+	if command.RowsAffected() == 0 {
+		return httpx.Problem(c, fiber.StatusNotFound, "post_not_found", "The requested post was not found.")
+	}
+	return c.SendStatus(fiber.StatusNoContent)
 }
 
 func (h *Handler) postByID(c *fiber.Ctx, userID, postID uuid.UUID) (Post, error) {
@@ -320,7 +556,60 @@ func (h *Handler) postByID(c *fiber.Ctx, userID, postID uuid.UUID) (Post, error)
 		&item.LikeCount, &item.CommentCount, &item.LikedByMe, &item.SavedByMe,
 		&item.CreatedAt,
 	)
-	return item, err
+	if err != nil {
+		return Post{}, err
+	}
+	// []Post{item} below is deliberately kept as its own variable rather
+	// than passed inline: attachMedia mutates the slice's element in
+	// place, and returning the original `item` instead of posts[0] would
+	// silently return an un-mutated copy — item was only used to
+	// construct the slice's initial value, so it never sees the update.
+	posts := []Post{item}
+	if err := attachMedia(c.UserContext(), h.db, posts); err != nil {
+		return Post{}, err
+	}
+	return posts[0], nil
+}
+
+// attachMedia batch-loads every post_media carousel for posts (one
+// query regardless of how many posts), mutating each Post's Media field
+// in place. Posts with no post_media rows (the legacy single-media
+// path) are left with a nil Media, matching Post.Media's `omitempty`.
+func attachMedia(ctx context.Context, db *pgxpool.Pool, posts []Post) error {
+	if len(posts) == 0 {
+		return nil
+	}
+	ids := make([]uuid.UUID, len(posts))
+	index := make(map[uuid.UUID]int, len(posts))
+	for i, post := range posts {
+		ids[i] = post.ID
+		index[post.ID] = i
+	}
+
+	rows, err := db.Query(ctx, `
+		SELECT pm.post_id, m.id, m.media_type, m.storage_path, m.width, m.height
+		FROM post_media pm
+		JOIN media m ON m.id = pm.media_id
+		WHERE pm.post_id = ANY($1)
+		ORDER BY pm.post_id, pm.position`, ids)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var postID uuid.UUID
+		var item PostMedia
+		var path string
+		if err := rows.Scan(&postID, &item.ID, &item.MediaType, &path, &item.Width, &item.Height); err != nil {
+			return err
+		}
+		item.MediaURL = "/media/" + path
+		if i, ok := index[postID]; ok {
+			posts[i].Media = append(posts[i].Media, item)
+		}
+	}
+	return rows.Err()
 }
 
 // likePost has its own implementation rather than routing through
