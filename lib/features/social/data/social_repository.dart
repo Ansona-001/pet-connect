@@ -32,6 +32,14 @@ class SwipeOutcome {
   final String? chatId;
 }
 
+/// The durable media/handler.go row an upload created — see
+/// SocialRepository.uploadMedia.
+class UploadedMedia {
+  const UploadedMedia({required this.id, required this.mediaType});
+  final String id;
+  final String mediaType;
+}
+
 class SocialRepository {
   SocialRepository(this._api);
 
@@ -126,47 +134,77 @@ class SocialRepository {
   Future<void> setPetFollowed(String petId, bool value) =>
       _toggle('/pets/$petId/follow', value);
 
-  Future<FeedPost> createImagePost({
-    required String petId,
-    required String caption,
+  /// Uploads one picked file to media/handler.go's durable-media pipeline
+  /// (re-encoding/EXIF-stripping for images happens server-side) and
+  /// returns its id for use with [createCarouselPost]. [onProgress]
+  /// drives the composer's per-item progress bar — Dio calls it with
+  /// (bytesSent, totalBytes) as the multipart body streams out.
+  Future<UploadedMedia> uploadMedia({
     required String fileName,
     required List<int> bytes,
-    String locationName = '',
+    required bool isVideo,
+    void Function(int sent, int total)? onProgress,
   }) async {
     try {
       final extension = fileName.toLowerCase().split('.').last;
-      final subtype = extension == 'png'
-          ? 'png'
-          : extension == 'webp'
-          ? 'webp'
-          : 'jpeg';
-      final uploadResponse = await _api.dio.post<Map<String, dynamic>>(
+      final contentType = isVideo
+          ? DioMediaType('video', extension == 'mov' ? 'quicktime' : 'mp4')
+          : DioMediaType(
+              'image',
+              extension == 'png'
+                  ? 'png'
+                  : extension == 'webp'
+                  ? 'webp'
+                  : 'jpeg',
+            );
+      final response = await _api.dio.post<Map<String, dynamic>>(
         '/media/uploads',
         data: FormData.fromMap({
           'file': MultipartFile.fromBytes(
             bytes,
             filename: fileName,
-            contentType: DioMediaType('image', subtype),
+            contentType: contentType,
           ),
         }),
+        onSendProgress: onProgress,
       );
-      final upload = _data(uploadResponse);
-      final mediaPath = upload['path']?.toString();
-      if (mediaPath == null || mediaPath.isEmpty) {
-        throw const ApiException('The media upload returned no file path.');
+      final upload = _data(response);
+      final id = upload['id']?.toString();
+      if (id == null || id.isEmpty) {
+        throw const ApiException('The media upload returned no id.');
       }
-      final postResponse = await _api.dio.post<Map<String, dynamic>>(
+      return UploadedMedia(
+        id: id,
+        mediaType:
+            upload['media_type']?.toString() ?? (isVideo ? 'video' : 'image'),
+      );
+    } catch (error) {
+      throw ApiException.from(error);
+    }
+  }
+
+  /// Creates a post from an ordered list of ids [uploadMedia] already
+  /// returned — server/internal/modules/social/handlers.go's carousel
+  /// path (brief Milestone 3's "Carousel post API"), used by the
+  /// multi-media composer for both single- and multi-item posts alike.
+  Future<FeedPost> createCarouselPost({
+    required String petId,
+    required String caption,
+    required List<String> mediaIds,
+    String locationName = '',
+  }) async {
+    try {
+      final response = await _api.dio.post<Map<String, dynamic>>(
         '/posts',
         data: {
           'pet_id': petId,
           'caption': caption.trim(),
           'location_name': locationName.trim(),
-          'media_url': mediaPath,
-          'media_type': 'image',
+          'media_ids': mediaIds,
           'visibility': 'public',
         },
       );
-      return _postFromJson(_data(postResponse));
+      return _postFromJson(_data(response));
     } catch (error) {
       throw ApiException.from(error);
     }
@@ -327,6 +365,13 @@ class SocialRepository {
     isLiked: json['liked_by_me'] == true,
     isSaved: json['saved_by_me'] == true,
     isFollowedByMe: json['followed_by_me'] == true,
+    media: _list(json['media']).map(_postMediaFromJson).toList(),
+  );
+
+  PostMediaItem _postMediaFromJson(Map<String, dynamic> json) => PostMediaItem(
+    id: json['id']?.toString() ?? '',
+    mediaAsset: _media(json['media_url']?.toString() ?? ''),
+    mediaType: json['media_type']?.toString() ?? 'image',
   );
 
   PetStory _storyFromJson(Map<String, dynamic> json) => PetStory(

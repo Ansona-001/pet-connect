@@ -14,6 +14,7 @@ class AppRoutes {
   static const String editProfile = '/profile/edit';
   static const String pets = '/pets';
   static const String petForm = '/pets/form';
+  static const String createPost = '/posts/create';
   static const String chatPath = '/chat/:chatId';
 
   static String chat(String chatId) => '/chat/$chatId';

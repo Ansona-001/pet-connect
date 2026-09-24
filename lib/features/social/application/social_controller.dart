@@ -292,23 +292,29 @@ class SocialController extends StateNotifier<SocialState> {
     );
   }
 
-  Future<bool> createImagePost({
+  /// Creates a post from media ids the composer has already uploaded
+  /// (one or many, in the given order) — see
+  /// SocialRepository.createCarouselPost. The composer owns uploading
+  /// each item itself (so it can show per-item progress via
+  /// SocialRepository.uploadMedia directly); this only creates the post
+  /// once every item has a media id.
+  Future<bool> createCarouselPost({
     required String caption,
-    required String fileName,
-    required List<int> bytes,
+    required List<String> mediaIds,
   }) async {
     final repository = _repository;
-    if (repository == null || state.pets.isEmpty) return false;
+    if (repository == null || state.pets.isEmpty || mediaIds.isEmpty) {
+      return false;
+    }
     final activeIndex = state.activePetIndex < state.pets.length
         ? state.activePetIndex
         : 0;
     state = state.copyWith(isLoading: true, clearError: true);
     try {
-      final post = await repository.createImagePost(
+      final post = await repository.createCarouselPost(
         petId: state.pets[activeIndex].id,
         caption: caption,
-        fileName: fileName,
-        bytes: bytes,
+        mediaIds: mediaIds,
         locationName: state.userProfile.city,
       );
       state = state.copyWith(posts: [post, ...state.posts], isLoading: false);

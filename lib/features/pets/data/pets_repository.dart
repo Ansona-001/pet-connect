@@ -116,7 +116,7 @@ class PetsRepository {
 
   /// Uploads a picked image and returns the server media path to store as
   /// `primary_image_url` — same `/media/uploads` contract
-  /// `SocialRepository.createImagePost` already uses for post media.
+  /// `SocialRepository.uploadMedia` already uses for post media.
   Future<String> uploadPhoto({
     required String fileName,
     required List<int> bytes,

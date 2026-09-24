@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:image_picker/image_picker.dart';
 
 import '../../../../core/routes/routes.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -202,63 +201,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     if (!mounted || result == null) return;
     if (result == 'create_post') {
-      await _createImagePost();
+      context.push<void>(AppRoutes.createPost);
     } else {
       _showMessage(result);
     }
-  }
-
-  Future<void> _createImagePost() async {
-    final image = await ImagePicker().pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 88,
-      maxWidth: 1800,
-    );
-    if (!mounted || image == null) return;
-    final captionController = TextEditingController();
-    final caption = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Share a new moment'),
-        content: TextField(
-          controller: captionController,
-          autofocus: true,
-          maxLines: 4,
-          maxLength: 2200,
-          decoration: const InputDecoration(
-            hintText: 'Write a caption for your pack...',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () =>
-                Navigator.of(dialogContext).pop(captionController.text),
-            child: const Text('Post'),
-          ),
-        ],
-      ),
-    );
-    captionController.dispose();
-    if (!mounted || caption == null) return;
-    _showMessage('Uploading your post...');
-    final created = await ref
-        .read(socialControllerProvider.notifier)
-        .createImagePost(
-          caption: caption,
-          fileName: image.name,
-          bytes: await image.readAsBytes(),
-        );
-    if (!mounted) return;
-    final error = ref.read(socialControllerProvider).error;
-    _showMessage(
-      created
-          ? 'Your post is live.'
-          : error ?? 'The post could not be created.',
-    );
   }
 
   Future<void> _showShareSheet(FeedPost post) async {

@@ -15,6 +15,7 @@ import '../../features/pets/presentation/screens/pet_form_screen.dart';
 import '../../features/social/presentation/screens/chat_screen.dart';
 import '../../features/social/presentation/screens/edit_profile_screen.dart';
 import '../../features/social/presentation/screens/inbox_screen.dart';
+import '../../features/social/presentation/screens/post_composer_screen.dart';
 import '../../features/social/presentation/screens/social_shell_screen.dart';
 import '../../features/splash/splash_screen.dart';
 import 'routes.dart';
@@ -146,6 +147,15 @@ final goRouterProvider = Provider<GoRouter>((ref) {
           return _slideFadePage(
             state: state,
             child: PetFormScreen(petId: state.uri.queryParameters['petId']),
+          );
+        },
+      ),
+      GoRoute(
+        path: AppRoutes.createPost,
+        pageBuilder: (context, state) {
+          return _slideFadePage(
+            state: state,
+            child: const PostComposerScreen(),
           );
         },
       ),

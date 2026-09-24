@@ -71,6 +71,22 @@ class PetStory {
   final bool isOwn;
 }
 
+/// One ordered item of a carousel post — mirrors
+/// server/internal/modules/social/models.go's `PostMedia`. Populated only
+/// for posts created via the multi-media composer (brief Milestone 3's
+/// "Post composer" day); a single-image legacy post has an empty [FeedPost.media].
+class PostMediaItem {
+  const PostMediaItem({
+    required this.id,
+    required this.mediaAsset,
+    required this.mediaType,
+  });
+
+  final String id;
+  final String mediaAsset;
+  final String mediaType;
+}
+
 class FeedPost {
   const FeedPost({
     required this.id,
@@ -88,6 +104,7 @@ class FeedPost {
     this.isLiked = false,
     this.isSaved = false,
     this.isFollowedByMe = false,
+    this.media = const [],
   });
 
   final String id;
@@ -109,6 +126,9 @@ class FeedPost {
   final bool isLiked;
   final bool isSaved;
   final bool isFollowedByMe;
+  // The ordered carousel (see PostMediaItem) for a post created with
+  // multiple media items; empty for the legacy single-mediaAsset path.
+  final List<PostMediaItem> media;
 
   FeedPost copyWith({
     int? likes,
@@ -133,6 +153,7 @@ class FeedPost {
       isLiked: isLiked ?? this.isLiked,
       isSaved: isSaved ?? this.isSaved,
       isFollowedByMe: isFollowedByMe ?? this.isFollowedByMe,
+      media: media,
     );
   }
 }
