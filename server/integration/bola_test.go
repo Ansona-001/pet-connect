@@ -39,6 +39,7 @@ import (
 	"petconnect/server/internal/modules/auth"
 	"petconnect/server/internal/modules/chat"
 	"petconnect/server/internal/modules/discovery"
+	"petconnect/server/internal/modules/events"
 	"petconnect/server/internal/modules/matching"
 	"petconnect/server/internal/modules/notifications"
 	"petconnect/server/internal/modules/pets"
@@ -100,6 +101,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 	safety.RegisterRoutes(protected, db)
 	matching.RegisterRoutes(protected, matching.NewService(db, nil))
 	chat.RegisterRoutes(protected, chat.NewService(db, nil))
+	events.RegisterRoutes(protected, db)
 
 	return &testEnv{app: app, db: db, tokens: tokens}
 }

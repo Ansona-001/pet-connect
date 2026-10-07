@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -8,6 +9,7 @@ import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_shadows.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_text_styles.dart';
+import '../../../../features/onboarding/presentation/widgets/page_indicator.dart';
 import '../../../../shared/widgets/app_image.dart';
 import '../../application/social_controller.dart';
 import '../../data/mock_social_data.dart';
@@ -766,18 +768,10 @@ class _FeedPostCard extends StatelessWidget {
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        AppImage(
-                          post.mediaAsset,
-                          fit: BoxFit.cover,
+                        _PostMediaCarousel(
+                          items: post.media,
+                          fallbackAsset: post.mediaAsset,
                           cacheWidth: cacheWidth,
-                          errorBuilder: (_, _, _) => const ColoredBox(
-                            color: AppColors.elevatedSurface,
-                            child: Icon(
-                              Icons.image_not_supported_outlined,
-                              color: AppColors.textDisabled,
-                              size: AppSpacing.giant,
-                            ),
-                          ),
                         ),
                         Positioned(
                           left: AppSpacing.md,
@@ -923,6 +917,191 @@ class _FeedPostCard extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Renders a post's full ordered carousel (brief Milestone 3's "Post
+/// composer" day built the create-side pipeline for this — multi-item
+/// upload, `media_ids`, the backend's ordered `post_media` join — but
+/// never wired a feed-side widget to show more than [FeedPost.mediaAsset],
+/// the first item, which is all a legacy single-image post ever had).
+/// [items] is [FeedPost.media]; an empty list means a legacy/demo post
+/// with only [fallbackAsset], rendered as a single-item "carousel" so the
+/// rest of this widget doesn't need two separate code paths.
+class _PostMediaCarousel extends StatefulWidget {
+  const _PostMediaCarousel({
+    required this.items,
+    required this.fallbackAsset,
+    required this.cacheWidth,
+  });
+
+  final List<PostMediaItem> items;
+  final String fallbackAsset;
+  final int cacheWidth;
+
+  @override
+  State<_PostMediaCarousel> createState() => _PostMediaCarouselState();
+}
+
+class _PostMediaCarouselState extends State<_PostMediaCarousel> {
+  final _controller = PageController();
+  int _index = 0;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _goTo(int page) {
+    _controller.animateToPage(
+      page,
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOut,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final items = widget.items.isNotEmpty
+        ? widget.items
+        : [
+            PostMediaItem(
+              id: '',
+              mediaAsset: widget.fallbackAsset,
+              mediaType: 'image',
+            ),
+          ];
+    final index = _index.clamp(0, items.length - 1);
+    // Click-to-advance arrows only make sense where there's no touch
+    // gesture to drag with — mobile and tablet browsers (Android/iOS, incl.
+    // iPadOS) stay drag-only, matching the native app's own touch gesture.
+    final isDesktop = switch (defaultTargetPlatform) {
+      TargetPlatform.macOS || TargetPlatform.windows || TargetPlatform.linux =>
+        true,
+      _ => false,
+    };
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        PageView.builder(
+          controller: _controller,
+          itemCount: items.length,
+          onPageChanged: (value) => setState(() => _index = value),
+          itemBuilder: (context, i) => _PostMediaTile(
+            item: items[i],
+            cacheWidth: widget.cacheWidth,
+          ),
+        ),
+        if (items.length > 1)
+          Positioned(
+            bottom: AppSpacing.sm,
+            left: 0,
+            right: 0,
+            child: PageIndicator(
+              length: items.length,
+              currentIndex: index,
+              activeColor: AppColors.white,
+            ),
+          ),
+        // PageView only responds to a drag gesture, not a plain click —
+        // fine on a touch device, but a desktop user clicking the photo
+        // with a mouse does nothing without these. Desktop-only: mobile
+        // and tablet browsers (Android/iOS, incl. iPadOS) have a drag
+        // gesture available and stay arrow-free, matching the native
+        // app's own touch behavior.
+        if (isDesktop && items.length > 1 && index > 0)
+          Positioned(
+            left: AppSpacing.xs,
+            top: 0,
+            bottom: 0,
+            child: Center(
+              child: _CarouselArrow(
+                icon: Icons.chevron_left_rounded,
+                onTap: () => _goTo(index - 1),
+              ),
+            ),
+          ),
+        if (isDesktop && items.length > 1 && index < items.length - 1)
+          Positioned(
+            right: AppSpacing.xs,
+            top: 0,
+            bottom: 0,
+            child: Center(
+              child: _CarouselArrow(
+                icon: Icons.chevron_right_rounded,
+                onTap: () => _goTo(index + 1),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _CarouselArrow extends StatelessWidget {
+  const _CarouselArrow({required this.icon, required this.onTap});
+
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xxs),
+      child: Material(
+        color: AppColors.overlay,
+        shape: const CircleBorder(),
+        child: InkWell(
+          onTap: onTap,
+          customBorder: const CircleBorder(),
+          child: Padding(
+            padding: const EdgeInsets.all(AppSpacing.xs),
+            child: Icon(icon, color: AppColors.white, size: AppSpacing.lg),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PostMediaTile extends StatelessWidget {
+  const _PostMediaTile({required this.item, required this.cacheWidth});
+
+  final PostMediaItem item;
+  final int cacheWidth;
+
+  @override
+  Widget build(BuildContext context) {
+    // No video_player dependency exists in this app yet (same gap the
+    // composer's own thumbnail strip already disclosed) — a video item
+    // gets a placeholder instead of attempting to decode it as an image.
+    if (item.mediaType == 'video') {
+      return const ColoredBox(
+        color: AppColors.elevatedSurface,
+        child: Center(
+          child: Icon(
+            Icons.play_circle_fill_rounded,
+            color: AppColors.white,
+            size: AppSpacing.giant,
+          ),
+        ),
+      );
+    }
+    return AppImage(
+      item.mediaAsset,
+      fit: BoxFit.cover,
+      cacheWidth: cacheWidth,
+      errorBuilder: (_, _, _) => const ColoredBox(
+        color: AppColors.elevatedSurface,
+        child: Icon(
+          Icons.image_not_supported_outlined,
+          color: AppColors.textDisabled,
+          size: AppSpacing.giant,
+        ),
       ),
     );
   }

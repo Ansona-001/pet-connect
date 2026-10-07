@@ -126,7 +126,7 @@ func (h *Handler) list(c *fiber.Ctx) error {
 		); err != nil {
 			return httpx.Problem(c, fiber.StatusInternalServerError, "event_query_failed", "Events could not be loaded.")
 		}
-		if hasLocation {
+		if hasLocation && canSeeExactLocation(userID, item.CreatorUserID, item.MyRSVP) {
 			item.Latitude, item.Longitude = &latitude, &longitude
 		}
 		items = append(items, item)
@@ -239,10 +239,19 @@ func (h *Handler) byID(c *fiber.Ctx, userID, eventID uuid.UUID) (Event, error) {
 		&hasLocation, &latitude, &longitude, &item.StartsAt, &item.AttendeeCount,
 		&item.MyRSVP, &item.CreatedAt,
 	)
-	if hasLocation {
+	if hasLocation && canSeeExactLocation(userID, item.CreatorUserID, item.MyRSVP) {
 		item.Latitude, item.Longitude = &latitude, &longitude
 	}
 	return item, err
+}
+
+// canSeeExactLocation implements ADR 0002's events policy: exact
+// coordinates are released only to the event's creator or an attendee who
+// has confirmed "going" — everyone else (including "interested" RSVPs and
+// anyone just browsing) gets location_name only, same as a withheld
+// location.latitude/longitude on /me and /pets/:petId for non-owners.
+func canSeeExactLocation(viewerID, creatorID uuid.UUID, myRSVP string) bool {
+	return viewerID == creatorID || myRSVP == "going"
 }
 
 func (h *Handler) setRSVP(c *fiber.Ctx) error {
